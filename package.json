@@ -1,0 +1,10 @@
+{
+  "name": "family-flow",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "scripts": {
+    "test": "node --test --no-warnings test/*.test.js",
+    "deploy": "npx wrangler d1 migrations apply DB --remote && npx wrangler deploy"
+  }
+}
