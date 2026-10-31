@@ -2,6 +2,8 @@ name = "family-flow-app"
 main = "src/index.js"
 compatibility_date = "2025-09-01"
 workers_dev = true
+# Keep variables/secrets added in the Cloudflare dashboard when GitHub pushes redeploy.
+keep_vars = true
 
 [assets]
 directory = "./public"
