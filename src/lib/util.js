@@ -52,7 +52,7 @@ export function errorResponse(err) {
     return json({ error: { code: err.code, message: err.message, ...err.extra } }, err.status);
   }
   console.error('Unhandled error', err && err.stack || err);
-  return json({ error: { code: 'internal', message: 'Something went wrong on our side. Nothing was changed.' } }, 500);
+  return json({ error: { code: 'internal', message: 'Something went wrong on our side. Please try again; if it keeps happening, check Diagnostics.' } }, 500);
 }
 
 export async function readJson(request, maxBytes = 200_000) {
