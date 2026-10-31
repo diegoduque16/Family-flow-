@@ -12,12 +12,14 @@ run_worker_first = ["/api/*", "/cal/*"]
 [[d1_databases]]
 binding = "DB"
 database_name = "family-flow"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "510bc377-721e-429f-a663-44a49cf55f41"
 migrations_dir = "migrations"
 
-[[r2_buckets]]
-binding = "BACKUPS"
-bucket_name = "family-flow-backups"
+# Daily backups to R2: enable R2 in the dashboard (free tier, needs a card on file), create the
+# bucket "family-flow-backups", then uncomment these three lines. Until then D1 Time Travel (30 days) is the backup.
+# [[r2_buckets]]
+# binding = "BACKUPS"
+# bucket_name = "family-flow-backups"
 
 [ai]
 binding = "AI"
