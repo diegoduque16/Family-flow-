@@ -280,3 +280,9 @@ test('backup retention keeps 35 days', async () => {
   assert.equal(r.ok, true);
   assert.equal(await env.BACKUPS.head('backups/2020-01-01.json.gz'), null);
 });
+
+test('Geoapify key is accepted bare or as a pasted example URL', async () => {
+  const { geoapifyKey } = await import('../src/routes/places.js');
+  assert.equal(geoapifyKey('abc123'), 'abc123');
+  assert.equal(geoapifyKey('https://api.geoapify.com/v1/geocode/search?text=x&apiKey=abc123def'), 'abc123def');
+});

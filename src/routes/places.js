@@ -31,6 +31,13 @@ async function cached(env, key, ttl, fn) {
   return data;
 }
 
+// Accept either the bare key or a pasted example URL containing "apiKey=...".
+export function geoapifyKey(raw) {
+  const s = String(raw || '').trim();
+  const m = /[?&]apiKey=([A-Za-z0-9]+)/.exec(s);
+  return m ? m[1] : s;
+}
+
 export async function geoapify(env, q, near, fetchImpl = fetch) {
   if (!env.GEOAPIFY_API_KEY) throw new Error('GEOAPIFY_API_KEY not configured');
   const u = new URL('https://api.geoapify.com/v1/geocode/autocomplete');
@@ -40,7 +47,7 @@ export async function geoapify(env, q, near, fetchImpl = fetch) {
   u.searchParams.set('format', 'json');
   u.searchParams.set('lang', 'en');
   if (near) u.searchParams.set('bias', `proximity:${near.lon},${near.lat}`);
-  u.searchParams.set('apiKey', env.GEOAPIFY_API_KEY);
+  u.searchParams.set('apiKey', geoapifyKey(env.GEOAPIFY_API_KEY));
   const res = await fetchImpl(u.toString(), { signal: AbortSignal.timeout(3000) });
   if (!res.ok) throw new Error(`Geoapify HTTP ${res.status}`);
   const data = await res.json();
