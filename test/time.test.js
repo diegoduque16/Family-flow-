@@ -43,3 +43,10 @@ test('all-day multi-day recurring', () => {
   const occ = expandEvent(ev, Date.parse('2027-12-01T00:00:00Z'), Date.parse('2028-01-01T00:00:00Z'));
   assert.deepEqual(occ.map((o) => [o.start_local, o.end_local]), [['2027-12-24', '2027-12-26']]);
 });
+
+test('browser copy of time.js is identical to the server copy', async () => {
+  const { readFileSync } = await import('node:fs');
+  const a = readFileSync(new URL('../src/lib/time.js', import.meta.url), 'utf8');
+  const b = readFileSync(new URL('../public/js/time.js', import.meta.url), 'utf8');
+  assert.equal(a, b, 'run: cp src/lib/time.js public/js/time.js');
+});
