@@ -225,7 +225,7 @@ export async function runDiagnostics(env, { live = true } = {}) {
   if (live) {
     checks.push(await timed('Address search: Geoapify', async () => {
       if (!env.GEOAPIFY_API_KEY) return { status: 'warn', detail: 'GEOAPIFY_API_KEY not set (using fallback provider)' };
-      const r = await geoapify(env, '1600 Pennsylvania Ave', null, env.__fetch || fetch);
+      const r = await geoapify(env, '1600 Pennsylvania Ave', null, env.__fetch || fetch, 10000);
       if (!r.length) throw new Error('No results for a known address');
       return { detail: `Returned ${r.length} results` };
     }));
