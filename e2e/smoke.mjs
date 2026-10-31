@@ -146,6 +146,32 @@ await step('offline: app opens from cache and queues an edit, then syncs', async
   assert.ok(r.tasks.some((t) => t.title === 'Buy sunscreen'), 'offline task reached the server');
 });
 
+await step('connect Google and Outlook calendars; imported events show read-only', async () => {
+  await page.goto(`${base}/#/more/sync`);
+  await page.getByRole('button', { name: 'Add Google Calendar' }).click();
+  await page.getByLabel('Calendar link').fill('https://calendar.google.com/calendar/ical/ana%40gmail.com/private-abc/basic.ics');
+  await page.getByLabel('Whose events are these?').selectOption({ label: 'Mom' });
+  await shot('15-connect-google');
+  await page.getByRole('button', { name: 'Connect' }).click();
+  await page.locator('.toast', { hasText: 'Connected “Ana Work”' }).waitFor();
+  await page.getByRole('button', { name: 'Add Outlook / Microsoft 365' }).click();
+  await page.getByLabel('Calendar link').fill('webcal://outlook.office365.com/owa/calendar/abc/def/calendar.ics');
+  await page.getByRole('button', { name: 'Connect' }).click();
+  await page.locator('.toast', { hasText: 'Connected “Leo Office”' }).waitFor();
+  await page.locator('.item', { hasText: 'Leo Office' }).waitFor();
+  await shot('16-connected');
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Today' }).click();
+  const review = page.locator('.ev', { hasText: 'Quarterly review' }).first();
+  await review.waitFor();
+  const lunch = page.locator('.ev', { hasText: 'Client lunch' }).first();
+  assert.match(await lunch.innerText(), /12\s?PM/); // 9am Pacific shown as noon Eastern
+  await review.click();
+  await page.getByText('From Ana Work (Google Calendar)', { exact: false }).waitFor();
+  assert.equal(await page.locator('.sheet').getByRole('button', { name: 'Edit' }).count(), 0);
+  await shot('17-imported-detail');
+  await page.keyboard.press('Escape');
+});
+
 await step('diagnostics shows real statuses', async () => {
   await page.goto(`${base}/#/more/diagnostics`);
   await page.locator('.diag').first().waitFor({ timeout: 20000 });

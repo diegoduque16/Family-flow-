@@ -1,7 +1,7 @@
 // "More" area: tasks & lists, family profiles, people & invites, places, calendar sync, notifications, household, data, diagnostics, account.
 import { h, icon, toast, sheet, confirmDialog, copyText, initials } from './ui.js';
 import { api, state, mutate, membersList, listsList, member, sync, clearLocalData, emit } from './store.js';
-import { openTaskEditor, placeInput, canEdit, errorText } from './editors.js';
+import { openTaskEditor, placeInput, canEdit, errorText, providerName } from './editors.js';
 import { taskRow } from './views.js';
 
 const COLORS = ['#E76F51', '#2A9D8F', '#E9A23B', '#7C6CF2', '#D9487D', '#3A86FF', '#6A994E', '#8D6E63', '#F4A261', '#264653', '#9B5DE5', '#00A6A6'];
@@ -18,7 +18,7 @@ export function MoreView() {
       item('#/more/places', 'pin', 'Saved places', 'Home, school, favourite spots'))),
     h('div', { class: 'card' }, h('ul', { class: 'list' },
       item('#/more/notifications', 'bell', 'Notifications', 'Reminders on this device'),
-      item('#/more/sync', 'link', 'Google & Apple Calendar', 'Show Family Flow in other calendars', canEdit()),
+      item('#/more/sync', 'link', 'Connected calendars', 'Google, Outlook, Apple — in and out'),
       item('#/more/household', 'home', 'Household', state.household ? `${state.household.name} · ${state.household.timezone}` : ''),
       item('#/more/data', 'download', 'Your data', 'Export or delete'),
       item('#/more/diagnostics', 'shield', 'Diagnostics', 'Live health checks', isOwner()),
@@ -207,27 +207,114 @@ export function PlacesView(rerender) {
   return root;
 }
 
-// ---------- calendar sync ----------
+// ---------- connected calendars (import + export) ----------
+const HOWTO = {
+  google: ['On a computer, open calendar.google.com.', 'Click the gear (top right) → Settings.', 'On the left, under “Settings for my calendars”, click the calendar you want.',
+    'Scroll to “Integrate calendar” and copy the “Secret address in iCal format”.', 'Paste it below. (Work or school Google accounts: your administrator may have turned this off.)'],
+  outlook: ['Open outlook.com (or Outlook on the web for work) and go to the calendar.', 'Settings (gear) → Calendar → Shared calendars.', 'Under “Publish a calendar”, pick the calendar and “Can view all details”, then Publish.',
+    'Copy the ICS link (not the HTML one) and paste it below. (Work accounts: your IT admin may have turned publishing off.)'],
+  apple: ['On iPhone: Calendar app → Calendars → tap ⓘ next to an iCloud calendar.', 'Turn on “Public Calendar” and tap Share Link → Copy.', 'Paste it below.'],
+};
+function sourceStatus(s) {
+  const ago = s.lastOkAt ? timeAgoShort(s.lastOkAt) : null;
+  if (s.status === 'error') return h('div', { class: 'banner bad', style: { margin: '6px 0 0' } }, s.error || 'Last update failed.');
+  return h('div', { class: 'meta' }, `${s.eventCount} event${s.eventCount === 1 ? '' : 's'} · updated ${ago || 'never'}${s.error ? ` · ${s.error}` : ''}`);
+}
+function timeAgoShort(ms) {
+  const m = Math.round((Date.now() - ms) / 60000);
+  return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`;
+}
+function addSourceSheet(provider, rerender) {
+  const url = h('input', { class: 'input', type: 'url', inputmode: 'url', autocapitalize: 'none', autocomplete: 'off', spellcheck: false, placeholder: provider === 'apple' ? 'webcal://…' : 'https://…', 'aria-label': 'Calendar link', autofocus: true });
+  const who = h('select', { class: 'input' }, h('option', { value: '' }, 'Nobody in particular'), membersList().map((m) => h('option', { value: m.id }, m.name)));
+  if (state.me.memberId) who.value = state.me.memberId;
+  const priv = h('input', { type: 'checkbox' });
+  const err = h('div');
+  const btn = h('button', { type: 'button', class: 'btn primary' }, 'Connect');
+  const steps = HOWTO[provider] || [];
+  const s = sheet({
+    title: `Bring in ${provider === 'google' ? 'Google Calendar' : provider === 'outlook' ? 'Outlook' : provider === 'apple' ? 'Apple Calendar' : 'a calendar'}`, full: true,
+    body: h('div', null,
+      steps.length ? h('ol', { class: 'muted small', style: { paddingLeft: '20px', margin: '10px 0' } }, steps.map((x) => h('li', { style: { margin: '4px 0' } }, x))) : h('p', { class: 'muted small' }, 'Paste a link to any calendar file (.ics or webcal://).'),
+      h('label', { class: 'field' }, h('span', { class: 'label' }, 'Calendar link'), url, h('p', { class: 'hint' }, 'This link is private, like a password: only you will see it here.')),
+      h('label', { class: 'field' }, h('span', { class: 'label' }, 'Whose events are these?'), who, h('p', { class: 'hint' }, 'Their colour is used, and overlaps with their Family Flow events are flagged.')),
+      h('label', { class: 'switch field' }, h('span', null, h('span', { style: { fontWeight: 650 } }, 'Only visible to me'), h('span', { class: 'hint', style: { display: 'block', margin: 0 } }, 'Off: the whole family sees these events')), priv),
+      h('p', { class: 'hint' }, 'One-way: events show in Family Flow and update about every 15 minutes. Changes are made in the original calendar.'),
+      err),
+    foot: [h('button', { type: 'button', class: 'btn', onclick: () => s.close() }, 'Cancel'), btn],
+  });
+  btn.addEventListener('click', async () => {
+    if (!url.value.trim()) { err.replaceChildren(h('p', { class: 'err' }, 'Paste the calendar link first.')); return; }
+    btn.disabled = true; btn.textContent = 'Checking the link…'; err.replaceChildren();
+    try {
+      const r = await api('POST', '/api/calendar-sources', { url: url.value.trim(), memberId: who.value || null, visibility: priv.checked ? 'private' : 'shared' });
+      s.close();
+      toast(`Connected “${r.source.name}” — ${r.imported} event${r.imported === 1 ? '' : 's'} imported`);
+      await sync(); rerender();
+    } catch (e) { err.replaceChildren(h('div', { class: 'banner bad' }, errorText(e))); }
+    finally { btn.disabled = false; btn.textContent = 'Connect'; }
+  });
+}
+function editSourceSheet(src, rerender) {
+  const name = h('input', { class: 'input', value: src.name, maxlength: 60 });
+  const who = h('select', { class: 'input' }, h('option', { value: '' }, 'Nobody in particular'), membersList().map((m) => h('option', { value: m.id }, m.name)));
+  who.value = src.memberId || '';
+  const priv = h('input', { type: 'checkbox', checked: src.visibility === 'private', disabled: !src.mine });
+  const err = h('div');
+  const s = sheet({
+    title: src.name,
+    body: h('div', null,
+      h('label', { class: 'field' }, h('span', { class: 'label' }, 'Name'), name),
+      h('label', { class: 'field' }, h('span', { class: 'label' }, 'Whose events'), who),
+      h('label', { class: 'switch field' }, h('span', { style: { fontWeight: 650 } }, 'Only visible to the person who connected it'), priv),
+      h('div', { class: 'field' }, h('span', { class: 'label' }, 'Link'), h('code', { class: 'copy' }, src.link)),
+      err),
+    foot: [
+      h('button', { type: 'button', class: 'btn danger', onclick: async () => {
+        if (!(await confirmDialog('Disconnect calendar?', `Its events will be removed from Family Flow. Nothing changes in ${providerName(src.provider)}.`, 'Disconnect', true))) return;
+        try { await api('DELETE', `/api/calendar-sources/${src.id}`); s.close(); toast('Disconnected'); await sync(); rerender(); } catch (e) { err.replaceChildren(h('div', { class: 'banner bad' }, errorText(e))); }
+      } }, 'Disconnect'),
+      h('button', { type: 'button', class: 'btn primary', onclick: async () => {
+        try { await api('PATCH', `/api/calendar-sources/${src.id}`, { name: name.value.trim() || src.name, memberId: who.value || null, visibility: priv.checked ? 'private' : 'shared' }); s.close(); await sync(); rerender(); } catch (e) { err.replaceChildren(h('div', { class: 'banner bad' }, errorText(e))); }
+      } }, 'Save')],
+  });
+}
+
 export function SyncView(rerender) {
-  const root = h('div', { class: 'page' }, back('Google & Apple Calendar'), h('div', { class: 'empty' }, 'Loading…'));
+  const root = h('div', { class: 'page' }, back(), h('div', { class: 'empty' }, 'Loading…'));
   (async () => {
     try {
-      const r = await api('GET', '/api/calendar-feed');
-      const google = `https://calendar.google.com/calendar/r?cid=${encodeURIComponent(r.webcal)}`;
-      root.replaceChildren(back('Google & Apple Calendar'),
+      const [cs, feed] = await Promise.all([api('GET', '/api/calendar-sources'), api('GET', '/api/calendar-feed')]);
+      state.sources = new Map(cs.sources.map((x) => [x.id, x]));
+      const google = `https://calendar.google.com/calendar/r?cid=${encodeURIComponent(feed.webcal)}`;
+      const provIcon = (p) => h('span', { class: 'avatar', '--c': { google: '#4285F4', outlook: '#0F6CBD', apple: '#555' }[p] || 'var(--accent)' }, { google: 'G', outlook: 'O', apple: '' }[p] || '⇣');
+      root.replaceChildren(back(),
         h('div', { class: 'card' },
-          h('h2', null, 'Subscribe from another calendar'),
-          h('p', { class: 'muted small', style: { marginTop: 0 } }, 'Shows your shared Family Flow events (not private ones) inside Google Calendar, Apple Calendar or Outlook. It is one-way: changes are made here in Family Flow. Google refreshes subscribed calendars on its own schedule, usually within a few hours; Apple lets you choose how often.'),
+          h('h2', null, 'Bring calendars into Family Flow'),
+          cs.sources.length ? h('ul', { class: 'list' }, cs.sources.map((s) => h('li', null, h('div', { class: 'item' },
+            provIcon(s.provider),
+            h('span', { class: 'grow' }, h('div', { class: 'title' }, s.name, s.visibility === 'private' ? ' 🔒' : '', member(s.memberId) ? h('span', { class: 'faint' }, ` · ${member(s.memberId).name}`) : null), sourceStatus(s)),
+            h('button', { type: 'button', class: 'icon-btn', 'aria-label': `Update ${s.name} now`, onclick: async (e) => {
+              e.currentTarget.disabled = true;
+              try { const r = await api('POST', `/api/calendar-sources/${s.id}/sync`, {}); toast(r.sync.ok ? `${s.name} is up to date` : r.sync.error, { bad: !r.sync.ok }); await sync(); rerender(); } catch (er) { toast(errorText(er), { bad: true }); }
+            } }, icon('sync')),
+            (s.mine || isOwner()) ? h('button', { type: 'button', class: 'icon-btn', 'aria-label': `Settings for ${s.name}`, onclick: () => editSourceSheet(s, rerender) }, icon('edit')) : null)))) :
+            h('p', { class: 'muted small', style: { marginTop: 0 } }, 'See work, school or personal calendars next to your family’s plans. Overlaps are flagged automatically.'),
+          canEdit() ? h('div', { class: 'stack', style: { marginTop: '10px' } },
+            h('button', { type: 'button', class: 'btn block', onclick: () => addSourceSheet('google', rerender) }, 'Add Google Calendar'),
+            h('button', { type: 'button', class: 'btn block', onclick: () => addSourceSheet('outlook', rerender) }, 'Add Outlook / Microsoft 365'),
+            h('button', { type: 'button', class: 'btn block', onclick: () => addSourceSheet('apple', rerender) }, 'Add Apple iCloud calendar'),
+            h('button', { type: 'button', class: 'btn ghost block', onclick: () => addSourceSheet('ics', rerender) }, 'Other calendar link (.ics)')) : null,
+          h('p', { class: 'hint' }, `One-way and read-only: updates about every ${cs.refreshMinutes} minutes. Google and Outlook can take a while to publish changes to these links.`)),
+        canEdit() ? h('div', { class: 'card' },
+          h('h2', null, 'Show Family Flow in other calendars'),
+          h('p', { class: 'muted small', style: { marginTop: 0 } }, 'Adds your shared Family Flow events (not private or imported ones) to Google, Apple or Outlook. One-way.'),
           h('div', { class: 'stack' },
-            h('a', { class: 'btn primary block', href: r.webcal }, 'Add to Apple Calendar'),
+            h('a', { class: 'btn block', href: feed.webcal }, 'Add to Apple Calendar'),
             h('a', { class: 'btn block', href: google, target: '_blank', rel: 'noopener' }, 'Add to Google Calendar'),
-            h('details', null, h('summary', { class: 'muted small', style: { padding: '8px 0' } }, 'Copy the link (Outlook, others)'), h('code', { class: 'copy' }, r.url), h('button', { type: 'button', class: 'btn sm', style: { marginTop: '8px' }, onclick: () => copyText(r.url) }, icon('copy'), 'Copy link')))),
-        h('div', { class: 'card' }, h('h2', null, 'Keep this link private'),
-          h('p', { class: 'muted small', style: { marginTop: 0 } }, 'Anyone with the link can see your shared events. If it leaks, make a new one — old subscriptions will stop updating.'),
-          isOwner() ? h('button', { type: 'button', class: 'btn danger block', onclick: async () => { if (await confirmDialog('Make a new link?', 'Existing subscriptions in other calendars will stop working and need to be added again.', 'Make new link', true)) { await api('POST', '/api/calendar-feed/rotate', {}); toast('New link created'); rerender(); } } }, 'Make a new link') : null),
-        h('div', { class: 'card' }, h('h2', null, 'Importing from Google into Family Flow'),
-          h('p', { class: 'muted small', style: { margin: 0 } }, 'Not available yet. Two-way Google sync needs a verified Google sign-in app, planned for a later phase.')));
-    } catch (e) { root.replaceChildren(back('Google & Apple Calendar'), h('div', { class: 'banner bad' }, errorText(e))); }
+            h('details', null, h('summary', { class: 'muted small', style: { padding: '8px 0' } }, 'Copy the link (Outlook, others)'), h('code', { class: 'copy' }, feed.url), h('button', { type: 'button', class: 'btn sm', style: { marginTop: '8px' }, onclick: () => copyText(feed.url) }, icon('copy'), 'Copy link'))),
+          isOwner() ? h('button', { type: 'button', class: 'btn ghost block', style: { marginTop: '8px' }, onclick: async () => { if (await confirmDialog('Make a new link?', 'Existing subscriptions in other calendars will stop updating and need to be added again.', 'Make new link', true)) { await api('POST', '/api/calendar-feed/rotate', {}); toast('New link created'); rerender(); } } }, 'Link leaked? Make a new one') : null) : null);
+    } catch (e) { root.replaceChildren(back(), h('div', { class: 'banner bad' }, errorText(e))); }
   })();
   return root;
 }

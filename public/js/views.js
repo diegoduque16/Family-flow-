@@ -30,7 +30,8 @@ export function evItem(o, { past = false } = {}) {
         whoDots(ev.assignees),
         ev.location ? h('span', { class: 'row', style: { gap: '3px' } }, ev.location.name || ev.location.address.split(',')[0]) : null,
         ev.rrule ? h('span', { title: describeRrule(ev.rrule), 'aria-label': 'Repeats' }, '↻') : null,
-        ev.visibility === 'private' ? h('span', { 'aria-label': 'Private' }, '🔒') : null)));
+        ev.visibility === 'private' ? h('span', { 'aria-label': 'Private' }, '🔒') : null,
+        ev.readOnly ? h('span', { class: 'faint' }, (state.sources.get(ev.sourceId) || {}).name || 'Imported') : null)));
 }
 
 export function taskRow(t, { showList = false } = {}) {

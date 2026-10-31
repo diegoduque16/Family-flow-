@@ -16,7 +16,7 @@ export function eventOut(r) {
     startUtc: r.start_utc, endUtc: r.end_utc,
     rrule: r.rrule, seriesEndUtc: r.series_end_utc, exdates: parseJsonCol(r.exdates, []),
     assignees: parseJsonCol(r.assignees, []), visibility: r.visibility, reminders: parseJsonCol(r.reminders, []),
-    ownerUserId: r.owner_user_id, version: r.version, seq: r.seq, updatedAt: r.updated_at, deleted: !!r.deleted_at,
+    ownerUserId: r.owner_user_id, sourceId: r.source_id || null, readOnly: !!r.source_id, version: r.version, seq: r.seq, updatedAt: r.updated_at, deleted: !!r.deleted_at,
   };
 }
 export function listOut(r) {
@@ -145,6 +145,11 @@ export async function createEvent(req, env, ctx) {
 async function loadEditable(db, ctx, id) {
   const cur = await one(db, 'SELECT * FROM events WHERE id = ? AND household_id = ?', id, ctx.household.id);
   if (!cur || cur.deleted_at || !visible(cur, ctx)) throw new HttpError(404, 'not_found', 'Event not found. It may have been deleted.');
+  if (cur.source_id) {
+    const src = await one(db, 'SELECT name, provider FROM calendar_sources WHERE id = ?', cur.source_id);
+    const where = src ? { google: 'Google Calendar', outlook: 'Outlook', apple: 'Apple Calendar' }[src.provider] || `“${src.name}”` : 'another calendar';
+    throw new HttpError(403, 'read_only', `This event comes from ${where}. Change it there and it will update here automatically.`);
+  }
   if (!canEdit(ctx) && cur.owner_user_id !== ctx.user.id) throw new HttpError(403, 'forbidden', 'You can only change your own events.');
   return cur;
 }
@@ -516,7 +521,7 @@ export async function icsFeed(req, env, ctx, { token }) {
   const hh = await one(db, 'SELECT * FROM households WHERE ics_token = ?', token.replace(/\.ics$/, ''));
   if (!hh) return new Response('Not found', { status: 404 });
   const members = Object.fromEntries((await all(db, 'SELECT id, name FROM members WHERE household_id = ?', hh.id)).map((m) => [m.id, m.name]));
-  const rows = await all(db, "SELECT * FROM events WHERE household_id = ? AND deleted_at IS NULL AND visibility = 'shared' AND (series_end_utc IS NULL OR series_end_utc > ?)", hh.id, now() - 180 * 86400000);
+  const rows = await all(db, "SELECT * FROM events WHERE household_id = ? AND deleted_at IS NULL AND visibility = 'shared' AND source_id IS NULL AND (series_end_utc IS NULL OR series_end_utc > ?)", hh.id, now() - 180 * 86400000);
   const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Family Flow//EN', 'CALSCALE:GREGORIAN', `X-WR-CALNAME:${icsEscape(hh.name)} (Family Flow)`, `X-WR-TIMEZONE:${hh.timezone}`];
   for (const r of rows) {
     const who = parseJsonCol(r.assignees, []).map((a) => members[a]).filter(Boolean);

@@ -2,7 +2,7 @@
 
 A shared family calendar, task lists and AI assistant. Mobile-first web app (installable on phones), running on Cloudflare.
 
-**Phase 1 status:** built and tested locally (24 automated server tests + a 12-step browser test on an iPhone-sized screen). Not deployed yet; see "Deploy" below.
+**Phase 1 status:** built and tested locally (30 automated server tests + a 13-step browser test on an iPhone-sized screen). Not deployed yet; see "Deploy" below.
 
 ## What's in Phase 1
 
@@ -16,13 +16,16 @@ A shared family calendar, task lists and AI assistant. Mobile-first web app (ins
 | Assistant | Claude reads your family's members, lists and next 7 days, then *proposes* events/tasks. Nothing is saved until you tap Confirm (or Edit then save). Unknown names or missing times → it asks. | `test/ops.test.js` with a scripted Claude; e2e |
 | Voice | Mic button records up to 60 s, Cloudflare Workers AI (Whisper) transcribes, text lands in the assistant box to check before sending. | Unit test with a mocked model. **Not yet tested against the real Whisper model or on a real phone mic.** |
 | Offline | App opens offline from a cached copy; changes made offline are queued and sent when back online; if someone else changed the same item, the server copy wins and you're told. The server database is the source of truth. | e2e (goes offline, adds a task, reconnects, checks the server) |
-| Other calendars | Private subscription link (ICS) for Apple / Google / Outlook, one-way, shared events only. Link can be rotated. | `test/api.test.js` |
+| Import Google / Outlook / Apple | Paste the calendar's private iCal link (step-by-step instructions in the app). Events appear in every view, coloured by the chosen family member, flagged in overlap checks, visible to the assistant, read-only. Refreshed every 15 min by the cron job (and "update now"); changed and deleted events are picked up; a revoked link shows a clear error and Diagnostics turns amber. Handles time zones incl. Outlook's Windows zone names, all-day events, repeats incl. "2nd Tuesday" / "last Friday", skipped and moved occurrences. Private imports visible only to whoever added them. | `test/import.test.js` (Google- and Outlook-shaped feeds), e2e |
+| Show Family Flow elsewhere | Private subscription link (ICS) for Apple / Google / Outlook, one-way, shared Family Flow events only (imported ones are left out to avoid duplicates). Link can be rotated. | `test/api.test.js` |
 | Backups | Daily gzip of all tables to R2, read back to verify, 35 days kept. D1 also has its own 30-day point-in-time restore. | `test/ops.test.js` restores the backup and checks the data |
 | Diagnostics | Owner-only page of live checks: database write/read, schema, cron heartbeat, overdue reminders, push, backups, Geoapify, Photon, Claude API key + model, Workers AI. A check is only green if it actually ran and passed. | `test/ops.test.js` |
 
 ## Not done yet (honest list)
 
-- **Two-way Google Calendar sync** (import from Google). Needs a Google OAuth app with verification. Phase 2.
+- **"Sign in with Google / Microsoft" calendar connection and two-way editing.** Import today uses private iCal links (no app approval needed). Signing in instead of pasting a link, faster updates, and editing Google/Outlook events from Family Flow need a Google Cloud app (Google verification for calendar access) and a Microsoft Entra app registration. Phase 2.
+- Some work/school accounts block the private iCal link (Google Workspace) or calendar publishing (Microsoft 365); then import isn't possible until the IT admin allows it or Phase 2 sign-in exists.
+- Imported events cover 60 days back to 400 days ahead.
 - **Email** (password reset, invite emails). There is no email provider yet, so a forgotten password currently needs an admin. Invite links are shared by copy/share instead.
 - Voice and push need checking on real devices after deploy (iPhone push only works after "Add to Home Screen").
 - Editing a *recurring* event while offline is blocked (simple edits and new items work offline).
@@ -49,7 +52,7 @@ A shared family calendar, task lists and AI assistant. Mobile-first web app (ins
 Requires Node 22+. No npm packages needed.
 
 ```sh
-npm test                                   # 24 server tests (node:test, SQLite stand-in for D1)
+npm test                                   # 30 server tests (node:test, SQLite stand-in for D1)
 MOCK_AI=1 MOCK_PLACES=1 node scripts/dev-server.js 8787 /tmp/dev.sqlite
 node e2e/smoke.mjs http://localhost:8787   # browser test (needs Playwright installed)
 ```

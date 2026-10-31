@@ -6,6 +6,7 @@ import * as cal from './routes/calendar.js';
 import * as places from './routes/places.js';
 import * as ai from './routes/assistant.js';
 import * as ops from './routes/ops.js';
+import * as sources from './routes/sources.js';
 
 // [method, path pattern, handler, access]  access: 'public' | 'session' (logged in) | 'household' (logged in + household)
 const ROUTES = [
@@ -45,6 +46,12 @@ const ROUTES = [
   ['DELETE', '/api/tasks/:id', cal.deleteTask, 'household'],
   ['GET', '/api/calendar-feed', cal.icsInfo, 'household'],
   ['POST', '/api/calendar-feed/rotate', cal.rotateIcs, 'household'],
+
+  ['GET', '/api/calendar-sources', sources.listSources, 'household'],
+  ['POST', '/api/calendar-sources', sources.addSource, 'household'],
+  ['PATCH', '/api/calendar-sources/:id', sources.updateSource, 'household'],
+  ['DELETE', '/api/calendar-sources/:id', sources.removeSource, 'household'],
+  ['POST', '/api/calendar-sources/:id/sync', sources.syncSourceNow, 'household'],
 
   ['GET', '/api/places', places.placesSearch, 'household'],
   ['GET', '/api/places/saved', places.savedPlaces, 'household'],
@@ -133,6 +140,7 @@ export default {
       })());
     } else {
       execCtx.waitUntil(ops.deliverDueReminders(env).catch((e) => console.error('reminders failed', e)));
+      execCtx.waitUntil(sources.refreshDueSources(env).catch((e) => console.error('calendar import failed', e)));
     }
   },
 };

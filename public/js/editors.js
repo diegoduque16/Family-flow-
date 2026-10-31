@@ -355,7 +355,8 @@ export function openEventDetail(ev, occ) {
   const who = (ev.assignees || []).map(member).filter(Boolean);
   const rr = ev.rrule ? describeRrule(ev.rrule) : null;
   const mine = ev.ownerUserId === state.me.user.id;
-  const editable = !ev._pending && (canEdit() || mine);
+  const editable = !ev._pending && !ev.readOnly && (canEdit() || mine);
+  const src = ev.sourceId ? state.sources.get(ev.sourceId) : null;
   const s = sheet({
     title: ev.title,
     body: h('div', { style: { paddingTop: '6px' } },
@@ -369,7 +370,8 @@ export function openEventDetail(ev, occ) {
         h('span', { class: 'btn ghost sm' }, 'Directions')) : null,
       (ev.reminders || []).length ? h('div', { class: 'row muted small', style: { margin: '12px 0' } }, icon('bell'), ev.reminders.map(reminderLabel).join(', ')) : null,
       ev.notes ? h('p', { style: { whiteSpace: 'pre-wrap', margin: '12px 0' } }, ev.notes) : null,
-      ev._pending ? h('div', { class: 'banner warn' }, 'Waiting to sync. You can edit it once it’s saved to the server.') : null),
+      ev._pending ? h('div', { class: 'banner warn' }, 'Waiting to sync. You can edit it once it’s saved to the server.') : null,
+      ev.readOnly ? h('div', { class: 'banner info' }, icon('link'), `From ${src ? src.name : 'a connected calendar'}${src ? ` (${providerName(src.provider)})` : ''}. To change it, edit it there — it updates here within about 15 minutes.`) : null),
     foot: editable ? [
       h('button', { type: 'button', class: 'btn danger', onclick: async () => { if (await deleteEvent(ev, occ)) s.close(); } }, icon('trash'), 'Delete'),
       h('button', { type: 'button', class: 'btn primary', onclick: () => { s.close(); openEventEditor({ event: ev, occurrence: ev.rrule ? o : null }); } }, icon('edit'), 'Edit'),
@@ -392,6 +394,8 @@ async function deleteEvent(ev, occ) {
     return true;
   } catch (e) { toast(errorText(e), { bad: true }); return false; }
 }
+
+export const providerName = (p) => ({ google: 'Google Calendar', outlook: 'Outlook', apple: 'Apple Calendar' }[p] || 'calendar link');
 
 export function describeRrule(rule) {
   const r = parseRrule(rule);

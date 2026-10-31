@@ -15,7 +15,7 @@ const TABS = [
 ];
 const SUB = {
   tasks: ['Tasks & lists', TasksView], family: ['Family', FamilyView], people: ['People', PeopleView], places: ['Places', PlacesView],
-  sync: ['Calendar sync', SyncView], notifications: ['Notifications', NotificationsView], household: ['Household', HouseholdView],
+  sync: ['Connected calendars', SyncView], notifications: ['Notifications', NotificationsView], household: ['Household', HouseholdView],
   data: ['Your data', DataView], diagnostics: ['Diagnostics', DiagnosticsView], account: ['Account', AccountView],
 };
 

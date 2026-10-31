@@ -213,6 +213,15 @@ export async function runDiagnostics(env, { live = true } = {}) {
     if (hrs > 30) return { status: 'fail', detail: `Last backup ${Math.round(hrs)}h ago` };
     return { detail: `${s.key} · ${(s.bytes / 1024).toFixed(1)} KB · ${Math.round(hrs)}h ago` };
   }));
+  checks.push(await timed('Imported calendars', async () => {
+    const r = await all(db, 'SELECT name, last_status, last_error, last_ok_at FROM calendar_sources WHERE deleted_at IS NULL');
+    if (!r.length) return { detail: 'None connected' };
+    const bad = r.filter((x) => x.last_status === 'error');
+    const stale = r.filter((x) => !x.last_ok_at || now() - x.last_ok_at > 3 * 3600000);
+    if (bad.length) return { status: 'warn', detail: `${bad.length} of ${r.length} failing: ${bad.slice(0, 3).map((x) => `${x.name}: ${x.last_error}`).join(' · ')}` };
+    if (stale.length) return { status: 'warn', detail: `${stale.length} of ${r.length} not updated in 3 hours` };
+    return { detail: `${r.length} calendar(s) importing normally` };
+  }));
   if (live) {
     checks.push(await timed('Address search: Geoapify', async () => {
       if (!env.GEOAPIFY_API_KEY) return { status: 'warn', detail: 'GEOAPIFY_API_KEY not set (using fallback provider)' };

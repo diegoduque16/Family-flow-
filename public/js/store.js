@@ -74,6 +74,7 @@ export const state = {
   lastSyncAt: 0,
   syncError: null,
   proposalsCount: 0,
+  sources: new Map(),
   unread: 0,
 };
 
@@ -151,7 +152,8 @@ export function sync({ full = false } = {}) {
 
 export async function refreshCounts() {
   try {
-    const [p, n] = await Promise.all([api('GET', '/api/proposals'), api('GET', '/api/notifications')]);
+    const [p, n, cs] = await Promise.all([api('GET', '/api/proposals'), api('GET', '/api/notifications'), api('GET', '/api/calendar-sources').catch(() => null)]);
+    if (cs) state.sources = new Map(cs.sources.map((x) => [x.id, x]));
     state.proposalsCount = p.proposals.length;
     state.unread = n.notifications.filter((x) => !x.read).length;
     emit('counts');

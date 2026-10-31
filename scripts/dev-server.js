@@ -6,6 +6,7 @@ import { extname, join, normalize } from 'node:path';
 import { D1Shim } from '../test/harness.js';
 import worker, { handle } from '../src/index.js';
 import { deliverDueReminders } from '../src/routes/ops.js';
+import { refreshDueSources } from '../src/routes/sources.js';
 
 const port = Number(process.argv[2] || 8787);
 const file = process.argv[3] || ':memory:';
@@ -67,6 +68,26 @@ if (process.env.MOCK_AI) {
   void prev;
 }
 
+// Canned Google/Outlook feeds for the browser test (any calendar.google.com/calendar/ical/... or outlook.office365.com/owa/calendar/... link)
+if (process.env.MOCK_CAL) {
+  const inner = env.__fetch || fetch;
+  env.__fetch = async (url, init) => {
+    const u = String(url);
+    if (/^https:\/\/(calendar\.google\.com\/calendar\/ical|outlook\.office365\.com\/owa\/calendar)\//.test(u)) {
+      const d = new Date(Date.now() + 86400000);
+      const day = d.toISOString().slice(0, 10).replace(/-/g, '');
+      const google = u.includes('google');
+      const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', `X-WR-CALNAME:${google ? 'Ana Work' : 'Leo Office'}`,
+        'BEGIN:VEVENT', `UID:${google ? 'g1' : 'o1'}`, `SUMMARY:${google ? 'Quarterly review' : 'Client lunch'}`,
+        google ? `DTSTART;TZID=America/New_York:${day}T100000` : `DTSTART;TZID=Pacific Standard Time:${day}T090000`,
+        google ? `DTEND;TZID=America/New_York:${day}T110000` : `DTEND;TZID=Pacific Standard Time:${day}T100000`,
+        'LOCATION:HQ\\, 5th floor', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
+      return new Response(ics, { headers: { 'content-type': 'text/calendar' } });
+    }
+    return inner(url, init);
+  };
+}
+
 const server = http.createServer(async (req, res) => {
   const chunks = [];
   for await (const c of req) chunks.push(c);
@@ -83,5 +104,5 @@ const server = http.createServer(async (req, res) => {
   } catch (e) { console.error(e); res.writeHead(500); res.end('dev server error'); }
 });
 server.listen(port, () => console.log(`Family Flow dev server on http://localhost:${port}`));
-setInterval(() => deliverDueReminders(env).catch((e) => console.error('cron', e)), 60000);
+setInterval(() => { deliverDueReminders(env).catch((e) => console.error('cron', e)); refreshDueSources(env).catch((e) => console.error('import', e)); }, 60000);
 void worker;

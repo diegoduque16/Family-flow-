@@ -326,7 +326,7 @@ export async function deleteHousehold(req, env, ctx) {
   if (body.confirm !== ctx.household.name) throw new HttpError(422, 'confirm', 'Type the household name exactly to confirm deletion.');
   const db = env.DB;
   const hh = ctx.household.id;
-  for (const t of ['scheduled_notifications', 'notifications', 'proposals', 'events', 'tasks', 'lists', 'places', 'members', 'invites', 'memberships']) {
+  for (const t of ['scheduled_notifications', 'notifications', 'proposals', 'events', 'calendar_sources', 'tasks', 'lists', 'places', 'members', 'invites', 'memberships']) {
     await run(db, `DELETE FROM ${t} WHERE household_id = ?`, hh);
   }
   await run(db, 'DELETE FROM conversations WHERE household_id = ?', hh);
