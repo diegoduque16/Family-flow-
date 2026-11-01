@@ -7,6 +7,7 @@ import * as places from './routes/places.js';
 import * as ai from './routes/assistant.js';
 import * as ops from './routes/ops.js';
 import * as sources from './routes/sources.js';
+import * as accounts from './routes/accounts.js';
 
 // [method, path pattern, handler, access]  access: 'public' | 'session' (logged in) | 'household' (logged in + household)
 const ROUTES = [
@@ -52,6 +53,10 @@ const ROUTES = [
   ['PATCH', '/api/calendar-sources/:id', sources.updateSource, 'household'],
   ['DELETE', '/api/calendar-sources/:id', sources.removeSource, 'household'],
   ['POST', '/api/calendar-sources/:id/sync', sources.syncSourceNow, 'household'],
+  ['GET', '/api/calendar-sources/:id/calendars', accounts.accountCalendars, 'household'],
+  ['POST', '/api/calendar-sources/:id/calendars', accounts.setAccountCalendars, 'household'],
+  ['POST', '/api/calendar-accounts/:provider/start', accounts.startConnect, 'household'],
+  ['GET', '/oauth/:provider/callback', accounts.oauthCallback, 'optional'],
 
   ['GET', '/api/places', places.placesSearch, 'household'],
   ['GET', '/api/places/saved', places.savedPlaces, 'household'],
@@ -102,7 +107,7 @@ function withHeaders(res) {
 export async function handle(request, env) {
   const url = new URL(request.url);
   const path = url.pathname;
-  if (!path.startsWith('/api/') && !path.startsWith('/cal/')) {
+  if (!path.startsWith('/api/') && !path.startsWith('/cal/') && !path.startsWith('/oauth/')) {
     if (env.ASSETS) return env.ASSETS.fetch(request);
     return new Response('Not found', { status: 404 });
   }

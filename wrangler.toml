@@ -9,7 +9,7 @@ keep_vars = true
 directory = "./public"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
-run_worker_first = ["/api/*", "/cal/*"]
+run_worker_first = ["/api/*", "/cal/*", "/oauth/*"]
 
 [[d1_databases]]
 binding = "DB"

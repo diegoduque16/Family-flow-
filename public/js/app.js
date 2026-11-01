@@ -20,7 +20,7 @@ const SUB = {
 };
 
 function route() {
-  const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
+  const parts = location.hash.replace(/^#\/?/, '').split('?')[0].split('/').filter(Boolean);
   return { tab: parts[0] || 'today', sub: parts[1] || null, arg: parts[2] || null };
 }
 

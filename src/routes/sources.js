@@ -5,6 +5,7 @@ import { one, all, run, nextSeq, audit } from '../lib/db.js';
 import { requireRole } from '../lib/auth.js';
 import { utcToLocal, localToUtc } from '../lib/time.js';
 import { expandIcs } from '../lib/ics.js';
+import { syncAccount } from './accounts.js';
 
 const PAST_DAYS = 60;
 const FUTURE_DAYS = 400;
@@ -137,6 +138,7 @@ export async function applyInstances(db, src, household, instances) {
 export async function syncSource(env, src) {
   const db = env.DB;
   const household = await one(db, 'SELECT * FROM households WHERE id = ?', src.household_id);
+  if (src.kind && src.kind !== 'ics') return syncAccount(env, src, household);
   const t = now();
   try {
     const feed = await fetchFeed(env, src);
@@ -165,10 +167,12 @@ export async function refreshDueSources(env, at = now(), limit = 8) {
 
 function sourceOut(r, ctx) {
   const mine = r.owner_user_id === ctx.user.id;
-  const host = new URL(r.url).hostname;
+  const host = r.kind && r.kind !== 'ics' ? null : new URL(r.url).hostname;
   return {
     id: r.id, name: r.name, provider: r.provider, memberId: r.member_id, visibility: r.visibility, mine,
-    link: mine ? r.url : `${host} (private link)`,
+    kind: r.kind || 'ics', accountEmail: r.account_email || null,
+    calendars: r.kind && r.kind !== 'ics' ? JSON.parse(r.calendars || '[]') : undefined,
+    link: r.kind && r.kind !== 'ics' ? `Signed in as ${r.account_email}` : mine ? r.url : `${host} (private link)`,
     lastSyncAt: r.last_sync_at, lastOkAt: r.last_ok_at, status: r.last_status, error: r.last_error, eventCount: r.event_count,
   };
 }

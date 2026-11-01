@@ -31,6 +31,7 @@ const ASSETS = {
 };
 
 const env = { DB, ASSETS, ADMIN_EMAILS: process.env.ADMIN_EMAILS || '' };
+for (const k of ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'MS_CLIENT_ID', 'MS_CLIENT_SECRET']) if (process.env[k]) env[k] = process.env[k];
 if (process.env.MOCK_PLACES) {
   env.GEOAPIFY_API_KEY = 'mock';
   const real = fetch;

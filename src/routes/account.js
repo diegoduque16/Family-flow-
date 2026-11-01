@@ -118,6 +118,8 @@ export async function me(req, env, ctx) {
       assistant: !!env.ANTHROPIC_API_KEY,
       voice: !!env.AI,
       places: !!env.GEOAPIFY_API_KEY,
+      googleCalendar: !!(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET),
+      microsoftCalendar: !!(env.MS_CLIENT_ID && env.MS_CLIENT_SECRET),
     },
   });
 }
@@ -326,7 +328,7 @@ export async function deleteHousehold(req, env, ctx) {
   if (body.confirm !== ctx.household.name) throw new HttpError(422, 'confirm', 'Type the household name exactly to confirm deletion.');
   const db = env.DB;
   const hh = ctx.household.id;
-  for (const t of ['scheduled_notifications', 'notifications', 'proposals', 'events', 'calendar_sources', 'tasks', 'lists', 'places', 'members', 'invites', 'memberships']) {
+  for (const t of ['scheduled_notifications', 'notifications', 'proposals', 'events', 'calendar_sources', 'oauth_states', 'tasks', 'lists', 'places', 'members', 'invites', 'memberships']) {
     await run(db, `DELETE FROM ${t} WHERE household_id = ?`, hh);
   }
   await run(db, 'DELETE FROM conversations WHERE household_id = ?', hh);

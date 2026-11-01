@@ -148,19 +148,34 @@ await step('offline: app opens from cache and queues an edit, then syncs', async
 
 await step('connect Google and Outlook calendars; imported events show read-only', async () => {
   await page.goto(`${base}/#/more/sync`);
-  await page.getByRole('button', { name: 'Add Google Calendar' }).click();
+  // one-tap sign-in goes to Google's real sign-in page with our callback and PKCE
+  await page.route('https://accounts.google.com/**', (r) => r.fulfill({ status: 200, contentType: 'text/html', body: '<h1>Google sign-in (stub)</h1>' }));
+  await page.getByRole('button', { name: 'Sign in with Google' }).click();
+  await shot('18-sign-in-sheet');
+  const [req] = await Promise.all([page.waitForRequest((r) => r.url().startsWith('https://accounts.google.com/')), page.getByRole('button', { name: 'Continue to Google' }).click()]);
+  const au = new URL(req.url());
+  assert.equal(au.searchParams.get('redirect_uri'), `${base}/oauth/google/callback`);
+  assert.equal(au.searchParams.get('code_challenge_method'), 'S256');
+  // user cancels at Google → comes back with a clear message
+  await page.goto(`${base}/oauth/google/callback?error=access_denied`);
+  await page.locator('.toast', { hasText: 'cancelled' }).waitFor();
+  await page.getByText('Other ways: paste a calendar link').click();
+  await page.getByRole('button', { name: 'Google Calendar link' }).click();
   await page.getByLabel('Calendar link').fill('https://calendar.google.com/calendar/ical/ana%40gmail.com/private-abc/basic.ics');
   await page.getByLabel('Whose events are these?').selectOption({ label: 'Mom' });
   await shot('15-connect-google');
   await page.getByRole('button', { name: 'Connect' }).click();
   await page.locator('.toast', { hasText: 'Connected “Ana Work”' }).waitFor();
-  await page.getByRole('button', { name: 'Add Outlook / Microsoft 365' }).click();
+  await page.locator('.item', { hasText: 'Ana Work' }).waitFor();
+  await page.getByText('Other ways: paste a calendar link').click();
+  await page.getByRole('button', { name: 'Outlook / Microsoft 365 link' }).click();
   await page.getByLabel('Calendar link').fill('webcal://outlook.office365.com/owa/calendar/abc/def/calendar.ics');
   await page.getByRole('button', { name: 'Connect' }).click();
   await page.locator('.toast', { hasText: 'Connected “Leo Office”' }).waitFor();
   await page.locator('.item', { hasText: 'Leo Office' }).waitFor();
   await shot('16-connected');
-  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Today' }).click();
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Calendar' }).click();
+  await page.getByRole('button', { name: 'Agenda', exact: true }).click();
   const review = page.locator('.ev', { hasText: 'Quarterly review' }).first();
   await review.waitFor();
   const lunch = page.locator('.ev', { hasText: 'Client lunch' }).first();

@@ -280,20 +280,83 @@ function editSourceSheet(src, rerender) {
   });
 }
 
+function connectAccountSheet(provider) {
+  const who = h('select', { class: 'input' }, h('option', { value: '' }, 'Nobody in particular'), membersList().map((m) => h('option', { value: m.id }, m.name)));
+  if (state.me.memberId) who.value = state.me.memberId;
+  const priv = h('input', { type: 'checkbox' });
+  const name = provider === 'google' ? 'Google' : 'Microsoft';
+  const go = h('button', { type: 'button', class: 'btn primary' }, `Continue to ${name}`);
+  const s = sheet({
+    title: `Sign in with ${name}`,
+    body: h('div', null,
+      h('label', { class: 'field' }, h('span', { class: 'label' }, 'Whose calendar is it?'), who),
+      h('label', { class: 'switch field' }, h('span', null, h('span', { style: { fontWeight: 650 } }, 'Only visible to me'), h('span', { class: 'hint', style: { display: 'block', margin: 0 } }, 'Off: the whole family sees these events')), priv),
+      h('p', { class: 'hint' }, `You’ll sign in on ${name}’s own page and allow read-only access. Family Flow never sees your password and can’t change your calendar.`)),
+    foot: [h('button', { type: 'button', class: 'btn', onclick: () => s.close() }, 'Cancel'), go],
+  });
+  go.addEventListener('click', () => { go.disabled = true; startAccount(provider, { memberId: who.value || null, visibility: priv.checked ? 'private' : 'shared' }).finally(() => { go.disabled = false; }); });
+}
+async function startAccount(provider, body) {
+  try {
+    const r = await api('POST', `/api/calendar-accounts/${provider}/start`, body);
+    location.href = r.url; // full-page redirect; works inside the home-screen app too
+  } catch (e) { toast(errorText(e), { bad: true }); }
+}
+async function chooseCalendarsSheet(src, rerender, justConnected = false) {
+  let cals;
+  try { cals = (await api('GET', `/api/calendar-sources/${src.id}/calendars`)).calendars; } catch (e) { toast(errorText(e), { bad: true }); return; }
+  const picked = new Set(cals.filter((c) => c.selected).map((c) => c.id));
+  const listEl = h('ul', { class: 'list' });
+  const render = () => listEl.replaceChildren(...cals.map((c) => h('li', null, h('label', { class: 'item', style: { cursor: 'pointer' } },
+    h('input', { type: 'checkbox', checked: picked.has(c.id), style: { width: '22px', height: '22px' }, onchange: (e) => { if (e.target.checked) picked.add(c.id); else picked.delete(c.id); } }),
+    h('span', { class: 'grow' }, h('div', { class: 'title' }, c.name), c.primary ? h('div', { class: 'meta' }, 'Main calendar') : null)))));
+  render();
+  const save = h('button', { type: 'button', class: 'btn primary' }, 'Save');
+  const s = sheet({
+    title: justConnected ? 'Which calendars should show?' : 'Choose calendars',
+    body: h('div', null, h('p', { class: 'muted small' }, src.accountEmail || ''), listEl),
+    foot: [h('button', { type: 'button', class: 'btn', onclick: () => s.close() }, justConnected ? 'Keep main only' : 'Cancel'), save],
+  });
+  save.addEventListener('click', async () => {
+    save.disabled = true;
+    try {
+      const r = await api('POST', `/api/calendar-sources/${src.id}/calendars`, { calendars: cals.filter((c) => picked.has(c.id)).map(({ id, name }) => ({ id, name })) });
+      s.close(); toast(r.ok ? 'Calendars updated' : r.sync.error, { bad: !r.ok }); await sync(); rerender();
+    } catch (e) { toast(errorText(e), { bad: true }); } finally { save.disabled = false; }
+  });
+}
+
 export function SyncView(rerender) {
   const root = h('div', { class: 'page' }, back(), h('div', { class: 'empty' }, 'Loading…'));
+  const qs = new URLSearchParams(location.hash.split('?')[1] || '');
+  if (qs.has('connected') || qs.has('error')) history.replaceState(null, '', '#/more/sync');
   (async () => {
+    if (qs.get('error')) {
+      const e = qs.get('error');
+      toast(e === 'denied' ? 'Sign-in was cancelled — nothing was connected.' : e === 'expired' || e === 'session' ? 'That sign-in took too long or was opened in another browser. Please try again from this screen.' : e, { bad: true, ms: 8000 });
+    }
     try {
       const [cs, feed] = await Promise.all([api('GET', '/api/calendar-sources'), api('GET', '/api/calendar-feed')]);
       state.sources = new Map(cs.sources.map((x) => [x.id, x]));
       const google = `https://calendar.google.com/calendar/r?cid=${encodeURIComponent(feed.webcal)}`;
+      const f = state.me.features || {};
       const provIcon = (p) => h('span', { class: 'avatar', '--c': { google: '#4285F4', outlook: '#0F6CBD', apple: '#555' }[p] || 'var(--accent)' }, { google: 'G', outlook: 'O', apple: '' }[p] || '⇣');
+      if (qs.get('connected')) {
+        const src = state.sources.get(qs.get('connected'));
+        toast(`Connected — ${qs.get('count') || 0} events imported`);
+        await sync();
+        if (src && src.calendars) setTimeout(() => chooseCalendarsSheet(src, rerender, true), 300);
+      }
       root.replaceChildren(back(),
         h('div', { class: 'card' },
           h('h2', null, 'Bring calendars into Family Flow'),
           cs.sources.length ? h('ul', { class: 'list' }, cs.sources.map((s) => h('li', null, h('div', { class: 'item' },
             provIcon(s.provider),
-            h('span', { class: 'grow' }, h('div', { class: 'title' }, s.name, s.visibility === 'private' ? ' 🔒' : '', member(s.memberId) ? h('span', { class: 'faint' }, ` · ${member(s.memberId).name}`) : null), sourceStatus(s)),
+            h('span', { class: 'grow' }, h('div', { class: 'title' }, s.name, s.visibility === 'private' ? ' 🔒' : '', member(s.memberId) ? h('span', { class: 'faint' }, ` · ${member(s.memberId).name}`) : null), sourceStatus(s),
+              s.kind !== 'ics' && s.calendars ? h('div', { class: 'meta' }, `Showing: ${s.calendars.map((x) => x.name).join(', ') || 'no calendars'}`) : null,
+              s.kind !== 'ics' && s.mine ? h('div', { class: 'row', style: { gap: '6px', marginTop: '6px' } },
+                h('button', { type: 'button', class: 'btn sm', onclick: () => chooseCalendarsSheet(s, rerender) }, 'Choose calendars'),
+                s.status === 'error' ? h('button', { type: 'button', class: 'btn sm primary', onclick: () => startAccount(s.kind, { memberId: s.memberId, visibility: s.visibility }) }, 'Reconnect') : null) : null),
             h('button', { type: 'button', class: 'icon-btn', 'aria-label': `Update ${s.name} now`, onclick: async (e) => {
               e.currentTarget.disabled = true;
               try { const r = await api('POST', `/api/calendar-sources/${s.id}/sync`, {}); toast(r.sync.ok ? `${s.name} is up to date` : r.sync.error, { bad: !r.sync.ok }); await sync(); rerender(); } catch (er) { toast(errorText(er), { bad: true }); }
@@ -301,11 +364,15 @@ export function SyncView(rerender) {
             (s.mine || isOwner()) ? h('button', { type: 'button', class: 'icon-btn', 'aria-label': `Settings for ${s.name}`, onclick: () => editSourceSheet(s, rerender) }, icon('edit')) : null)))) :
             h('p', { class: 'muted small', style: { marginTop: 0 } }, 'See work, school or personal calendars next to your family’s plans. Overlaps are flagged automatically.'),
           canEdit() ? h('div', { class: 'stack', style: { marginTop: '10px' } },
-            h('button', { type: 'button', class: 'btn block', onclick: () => addSourceSheet('google', rerender) }, 'Add Google Calendar'),
-            h('button', { type: 'button', class: 'btn block', onclick: () => addSourceSheet('outlook', rerender) }, 'Add Outlook / Microsoft 365'),
-            h('button', { type: 'button', class: 'btn block', onclick: () => addSourceSheet('apple', rerender) }, 'Add Apple iCloud calendar'),
-            h('button', { type: 'button', class: 'btn ghost block', onclick: () => addSourceSheet('ics', rerender) }, 'Other calendar link (.ics)')) : null,
-          h('p', { class: 'hint' }, `One-way and read-only: updates about every ${cs.refreshMinutes} minutes. Google and Outlook can take a while to publish changes to these links.`)),
+            f.googleCalendar ? h('button', { type: 'button', class: 'btn primary block', onclick: () => connectAccountSheet('google') }, provIcon('google'), 'Sign in with Google') : null,
+            f.microsoftCalendar ? h('button', { type: 'button', class: 'btn primary block', onclick: () => connectAccountSheet('microsoft') }, provIcon('outlook'), 'Sign in with Microsoft (Outlook)') : null,
+            h('details', { open: !(f.googleCalendar || f.microsoftCalendar) }, h('summary', { class: 'muted small', style: { padding: '8px 0' } }, f.googleCalendar || f.microsoftCalendar ? 'Other ways: paste a calendar link' : 'Connect with a calendar link'),
+              h('div', { class: 'stack' },
+                h('button', { type: 'button', class: 'btn block', onclick: () => addSourceSheet('google', rerender) }, 'Google Calendar link'),
+                h('button', { type: 'button', class: 'btn block', onclick: () => addSourceSheet('outlook', rerender) }, 'Outlook / Microsoft 365 link'),
+                h('button', { type: 'button', class: 'btn block', onclick: () => addSourceSheet('apple', rerender) }, 'Apple iCloud calendar link'),
+                h('button', { type: 'button', class: 'btn ghost block', onclick: () => addSourceSheet('ics', rerender) }, 'Other calendar link (.ics)')))) : null,
+          h('p', { class: 'hint' }, `One-way and read-only: updates about every ${cs.refreshMinutes} minutes.`)),
         canEdit() ? h('div', { class: 'card' },
           h('h2', null, 'Show Family Flow in other calendars'),
           h('p', { class: 'muted small', style: { marginTop: 0 } }, 'Adds your shared Family Flow events (not private or imported ones) to Google, Apple or Outlook. One-way.'),
