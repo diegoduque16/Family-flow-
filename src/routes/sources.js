@@ -79,6 +79,15 @@ export async function applyFeed(db, src, household, text) {
   const toMs = t + FUTURE_DAYS * 86400000;
   const tz = household.timezone;
   const { instances, truncated, calName } = expandIcs(text, { fromMs, toMs, fallbackTz: tz });
+  return { ...(await applyInstances(db, src, household, instances)), truncated, calName };
+}
+
+export const importWindow = (t = now()) => ({ fromMs: t - PAST_DAYS * 86400000, toMs: t + FUTURE_DAYS * 86400000 });
+
+// Writes a set of event instances for a source; only changed rows get a new sync sequence; missing ones are removed.
+export async function applyInstances(db, src, household, instances) {
+  const t = now();
+  const tz = household.timezone;
   const existing = new Map((await all(db, 'SELECT id, ext_hash, deleted_at FROM events WHERE source_id = ?', src.id)).map((r) => [r.id, r]));
   const seen = new Set();
   let added = 0; let changed = 0; let removed = 0;
@@ -122,7 +131,7 @@ export async function applyFeed(db, src, household, text) {
   }
   // purge long-deleted imported rows so the table doesn't grow forever
   await run(db, 'DELETE FROM events WHERE source_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?', src.id, t - 30 * 86400000);
-  return { added, changed, removed, total: seen.size, truncated, calName };
+  return { added, changed, removed, total: seen.size };
 }
 
 export async function syncSource(env, src) {

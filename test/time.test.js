@@ -50,3 +50,14 @@ test('browser copy of time.js is identical to the server copy', async () => {
   const b = readFileSync(new URL('../public/js/time.js', import.meta.url), 'utf8');
   assert.equal(a, b, 'run: cp src/lib/time.js public/js/time.js');
 });
+
+test('an event starting in the repeated hour when clocks go back gets a valid one-hour default', async () => {
+  const { makeEnv, signedUp } = await import('./harness.js');
+  const env = makeEnv();
+  const { c } = await signedUp(env);
+  const r = await c.post('/api/events', { title: 'Late', start: '2026-11-01T01:30' });
+  assert.equal(r.status, 201, JSON.stringify(r.data));
+  assert.equal(r.data.event.endUtc - r.data.event.startUtc, 3600000);
+  const spring = await c.post('/api/events', { title: 'Gap', start: '2027-03-14T02:30' }); // nonexistent time rolls forward
+  assert.equal(spring.status, 201, JSON.stringify(spring.data));
+});

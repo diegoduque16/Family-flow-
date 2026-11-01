@@ -68,7 +68,8 @@ export async function normalizeEvent(db, ctx, e) {
   }
   if (!re.test(end)) throw new HttpError(422, 'invalid', 'end has the wrong format', { field: 'end' });
   const startUtc = localToUtc(e.start, tz);
-  const endUtc = localToUtc(end, tz);
+  // Default length is one real hour (not one wall-clock hour), so it works across the autumn clock change.
+  const endUtc = !e.end && !e.allDay ? startUtc + 3600000 : localToUtc(end, tz);
   if (!(endUtc > startUtc)) throw new HttpError(422, 'invalid', 'end must be after start', { field: 'end' });
   if (endUtc - startUtc > 366 * 86400000) throw new HttpError(422, 'invalid', 'events can last at most a year', { field: 'end' });
   let rrule = null;
