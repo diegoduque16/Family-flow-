@@ -416,7 +416,8 @@ export function openEventDetail(ev, occ) {
       (ev.reminders || []).length ? h('div', { class: 'row muted small', style: { margin: '12px 0' } }, icon('bell'), ev.reminders.map(reminderLabel).join(', ')) : null,
       ev.notes ? h('p', { style: { whiteSpace: 'pre-wrap', margin: '12px 0' } }, ev.notes) : null,
       ev._pending ? h('div', { class: 'banner warn' }, 'Waiting to sync. You can edit it once it’s saved to the server.') : null,
-      ev.readOnly ? h('div', { class: 'banner info' }, icon('link'), `From ${src ? src.name : 'a connected calendar'}${src ? ` (${providerName(src.provider)})` : ''}. To change it, edit it there — it updates here within about 15 minutes.`) : null),
+      ev.holiday ? h('div', { class: 'banner info' }, h('div', null, h('div', null, ev.federal ? 'US federal holiday — banks, post offices and many schools and offices are closed.' : 'Popular US observance (not a day off).'), h('div', { class: 'small', style: { marginTop: '6px', opacity: 0.8 } }, 'Added automatically. Turn holidays off in More → Household.'))) : null,
+      ev.readOnly && !ev.holiday ? h('div', { class: 'banner info' }, icon('link'), `From ${src ? src.name : 'a connected calendar'}${src ? ` (${providerName(src.provider)})` : ''}. To change it, edit it there — it updates here within about 15 minutes.`) : null),
     foot: editable ? [
       h('button', { type: 'button', class: 'btn danger', onclick: async () => { if (await deleteEvent(ev, occ)) s.close(); } }, icon('trash'), 'Delete'),
       h('button', { type: 'button', class: 'btn primary', onclick: () => { s.close(); openEventEditor({ event: ev, occurrence: ev.rrule ? o : null }); } }, icon('edit'), 'Edit'),

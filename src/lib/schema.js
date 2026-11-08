@@ -23,6 +23,7 @@ const COLUMNS = [
   ['lists', 'group_id', 'TEXT'],
   ['members', 'avatar', 'TEXT'],                                    // data:image/... photo or an emoji
   ['memberships', 'notify_activity', 'INTEGER NOT NULL DEFAULT 1'], // family-activity alerts on/off
+  ['households', 'holidays', 'TEXT'],                               // 'US' | 'none' | null (automatic from time zone)
 ];
 
 const done = new WeakMap();

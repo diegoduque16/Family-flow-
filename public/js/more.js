@@ -1,6 +1,7 @@
 // "More" area: tasks & lists, family profiles, people & invites, places, calendar sync, notifications, household, data, diagnostics, account.
 import { h, icon, toast, sheet, confirmDialog, copyText, initials, avatarEl } from './ui.js';
 import { AVATAR_CHOICES } from './icons.js';
+import { HOLIDAY_REGIONS, isUsZone } from './holidays.js';
 import { api, state, mutate, membersList, listsList, member, sync, clearLocalData, emit, groupsList, myGroups, groupName } from './store.js';
 import { openTaskEditor, placeInput, canEdit, errorText, providerName } from './editors.js';
 import { taskRow } from './views.js';
@@ -552,13 +553,19 @@ export function HouseholdView(rerender) {
   const zones = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [hh.timezone];
   const tzSel = h('select', { class: 'input', disabled: !isOwner() }, zones.map((z) => h('option', { value: z }, z.replace(/_/g, ' '))));
   tzSel.value = hh.timezone;
+  const holSel = h('select', { class: 'input', disabled: !isOwner() },
+    h('option', { value: 'auto' }, `Automatic (${isUsZone(hh.timezone) ? 'United States' : 'none for this time zone'})`),
+    HOLIDAY_REGIONS.map((r) => h('option', { value: r.id }, r.name)),
+    h('option', { value: 'none' }, 'Don’t show holidays'));
+  holSel.value = hh.holidaysSetting || 'auto';
   const others = state.me.households.filter((x) => x.id !== hh.id);
   return h('div', { class: 'page' }, back('Household'),
     h('div', { class: 'card' },
       h('label', { class: 'field' }, h('span', { class: 'label' }, 'Name'), name),
       h('label', { class: 'field' }, h('span', { class: 'label' }, 'Home time zone'), tzSel, h('p', { class: 'hint' }, 'New events use this zone. Changing it doesn’t move existing events.')),
+      h('label', { class: 'field' }, h('span', { class: 'label' }, 'Holidays on the calendar'), holSel, h('p', { class: 'hint' }, 'Federal holidays (with the weekday off when one falls on a weekend) plus popular days like Mother’s Day and Halloween.')),
       isOwner() ? h('button', { type: 'button', class: 'btn primary block', onclick: async () => {
-        try { await api('PATCH', '/api/household', { name: name.value.trim(), timezone: tzSel.value }); await sync({ full: true }); toast('Saved'); rerender(); } catch (e) { toast(errorText(e), { bad: true }); }
+        try { await api('PATCH', '/api/household', { name: name.value.trim(), timezone: tzSel.value, holidays: holSel.value }); await sync({ full: true }); toast('Saved'); rerender(); } catch (e) { toast(errorText(e), { bad: true }); }
       } }, 'Save') : h('p', { class: 'hint' }, 'Only owners can change these.')),
     h('div', { class: 'card' }, h('h2', null, 'Other households'),
       others.length ? h('ul', { class: 'list' }, others.map((o) => h('li', null, h('button', { type: 'button', class: 'item', onclick: async () => { await api('POST', '/api/households/switch', { householdId: o.id }); location.hash = '#/today'; location.reload(); } },

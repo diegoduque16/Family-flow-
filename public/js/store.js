@@ -1,6 +1,7 @@
 // Data layer: API client, local cache in IndexedDB (so the app opens offline), sync feed, and an outbox for offline edits.
 // The server (D1) is the source of truth. The local copy is a cache that is reconciled through /api/sync.
 import { expandEvent, localToUtc, utcToLocal, seriesEndUtc } from './time.js';
+import { holidaysBetween } from './holidays.js';
 
 export class ApiError extends Error {
   constructor(status, code, message, extra = {}) { super(message); this.status = status; this.code = code; this.extra = extra; }
@@ -243,7 +244,17 @@ export function occurrences(fromDate, toDate, filter = null) {
       out.push({ ev: e, start: o.start_local, end: o.end_local, startUtc: o.start_utc, endUtc: o.end_utc, key: `${e.id}|${o.start_local}` });
     }
   }
-  out.sort((a, b) => (b.ev.allDay - a.ev.allDay) || (a.startUtc - b.startUtc) || a.ev.title.localeCompare(b.ev.title));
+  // Public holidays (calculated on the device, for everyone, whatever the person filter).
+  const region = state.household && state.household.holidays;
+  if (region) {
+    for (const hd of holidaysBetween(region, fromDate.slice(0, 10), toDate.slice(0, 10))) {
+      const end = addDayLocal(hd.date);
+      const ev = { id: `hol_${hd.date}_${hd.name.replace(/\W+/g, '')}`, title: hd.name, icon: hd.icon, allDay: true, start: hd.date, end, tz: z,
+        startUtc: localToUtc(hd.date, z), endUtc: localToUtc(end, z), assignees: [], visibility: 'shared', reminders: [], readOnly: true, holiday: true, federal: hd.federal };
+      out.push({ ev, start: hd.date, end, startUtc: ev.startUtc, endUtc: ev.endUtc, key: `${ev.id}|${hd.date}` });
+    }
+  }
+  out.sort((a, b) => (b.ev.allDay - a.ev.allDay) || (!!b.ev.holiday - !!a.ev.holiday) || (a.startUtc - b.startUtc) || a.ev.title.localeCompare(b.ev.title));
   return out;
 }
 

@@ -1,6 +1,6 @@
 // Service worker: offline app shell, web push display, notification clicks.
-const VERSION = 'ff-v3';
-const SHELL = ['/', '/index.html', '/css/app.css', '/js/app.js', '/js/ui.js', '/js/store.js', '/js/time.js', '/js/editors.js', '/js/views.js', '/js/more.js', '/js/icons.js',
+const VERSION = 'ff-v4';
+const SHELL = ['/', '/index.html', '/css/app.css', '/js/app.js', '/js/ui.js', '/js/store.js', '/js/time.js', '/js/editors.js', '/js/views.js', '/js/more.js', '/js/icons.js', '/js/holidays.js',
   '/manifest.webmanifest', '/icons/icon.svg', '/icons/icon-192.png', '/icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {

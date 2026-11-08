@@ -8,6 +8,7 @@ import { eventVisible, listVisible, eventAudience, audienceUserIds } from '../li
 import { notifyActivity, actorName, eventWhen } from '../lib/activity.js';
 import { checkGroup, groupOut } from './groups.js';
 import { eventIcon } from '../../public/js/icons.js';
+import { effectiveHolidays } from '../../public/js/holidays.js';
 import { memberOut } from './account.js';
 import { rememberPlace } from './places.js';
 
@@ -568,7 +569,7 @@ export async function sync(req, env, ctx) {
   return json({
     seq,
     full: since === 0,
-    household: { id: hh, name: ctx.household.name, timezone: ctx.household.timezone },
+    household: { id: hh, name: ctx.household.name, timezone: ctx.household.timezone, holidays: effectiveHolidays(ctx.household.holidays, ctx.household.timezone), holidaysSetting: ctx.household.holidays || 'auto' },
     members: members.map(memberOut),
     events: events.map((r) => (visible(r, ctx) ? eventOut(r) : { id: r.id, deleted: true, seq: r.seq })),
     lists: lists.map((r) => (hiddenLists.has(r.id) ? gone(r) : listOut(r))),

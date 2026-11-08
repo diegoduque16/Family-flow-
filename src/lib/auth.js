@@ -88,7 +88,7 @@ export async function loadContext(request, db) {
     m = await one(db, 'SELECT household_id, role, member_id FROM memberships WHERE user_id = ? ORDER BY created_at LIMIT 1', s.user.id);
     if (m) await run(db, 'UPDATE users SET current_household_id = ? WHERE id = ?', m.household_id, s.user.id);
   }
-  const household = m ? await one(db, 'SELECT id, name, timezone, seq FROM households WHERE id = ?', m.household_id) : null;
+  const household = m ? await one(db, 'SELECT id, name, timezone, seq, holidays FROM households WHERE id = ?', m.household_id) : null;
   const groupIds = household ? await loadMyGroups(db, household.id, m.member_id) : new Set();
   return { ...s, household, role: m ? m.role : null, memberId: m ? m.member_id : null, groupIds };
 }

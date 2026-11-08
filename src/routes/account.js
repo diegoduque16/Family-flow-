@@ -150,10 +150,14 @@ export async function newHousehold(req, env, ctx) {
 
 export async function updateHousehold(req, env, ctx) {
   requireRole(ctx, ['owner']);
-  const body = validate(v.object({ name: v.string({ min: 1, max: 60 }).optional(), timezone: v.string({ max: 60 }).optional() }), await readJson(req));
+  const body = validate(v.object({
+    name: v.string({ min: 1, max: 60 }).optional(), timezone: v.string({ max: 60 }).optional(),
+    holidays: v.string({ oneOf: ['auto', 'US', 'none'] }).optional(), // which public holidays to show on the calendar
+  }), await readJson(req));
   if (body.timezone && !isValidTimeZone(body.timezone)) throw new HttpError(422, 'invalid', 'timezone is not a valid time zone', { field: 'timezone' });
   await run(env.DB, 'UPDATE households SET name = COALESCE(?, name), timezone = COALESCE(?, timezone) WHERE id = ?',
     body.name ?? null, body.timezone ?? null, ctx.household.id);
+  if (body.holidays) await run(env.DB, 'UPDATE households SET holidays = ? WHERE id = ?', body.holidays === 'auto' ? null : body.holidays, ctx.household.id);
   await audit(env.DB, { householdId: ctx.household.id, userId: ctx.user.id, action: 'household.update', detail: body });
   return json({ ok: true });
 }
