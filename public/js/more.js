@@ -272,6 +272,20 @@ export function PeopleView(rerender) {
   })();
   return root;
 }
+// Buttons to send a message: WhatsApp and Messages open with the text filled in (you pick the person), plus Copy and the phone's share sheet.
+// The share sheet gets the text only (link included in it): WhatsApp on iPhone drops the message when a separate url is shared.
+function sendButtons(text, title) {
+  const enc = encodeURIComponent(text);
+  const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  return h('div', { class: 'stack', style: { gap: '8px' } },
+    h('div', { class: 'two' },
+      h('a', { class: 'btn primary', href: `https://wa.me/?text=${enc}`, target: '_blank', rel: 'noopener' }, '💬 WhatsApp'),
+      h('a', { class: 'btn', href: ios ? `sms:&body=${enc}` : `sms:?body=${enc}` }, '✉️ Text message')),
+    h('div', { class: 'two' },
+      h('button', { type: 'button', class: 'btn', onclick: () => copyText(text) }, icon('copy'), 'Copy'),
+      navigator.share ? h('button', { type: 'button', class: 'btn', onclick: () => navigator.share({ title, text }).catch(() => {}) }, icon('share'), 'More…') : h('a', { class: 'btn', href: `mailto:?subject=${encodeURIComponent(title)}&body=${enc}` }, '📧 Email')));
+}
+
 // For people who already have an account: the app's address plus how to sign in and install it.
 function sendAppLink(p) {
   const url = `${location.origin}/`;
@@ -286,9 +300,7 @@ function sendAppLink(p) {
     body: h('div', { class: 'stack', style: { padding: '8px 0' } },
       h('p', { class: 'muted' }, p ? `${first || 'They'} already ${p.name ? 'has' : 'have'} an account, so no new invitation is needed — just the app’s address.` : 'Share this with anyone in the family who already has an account.'),
       h('code', { class: 'copy', style: { whiteSpace: 'pre-wrap' } }, text),
-      h('div', { class: 'two' },
-        h('button', { type: 'button', class: 'btn', onclick: () => copyText(text) }, icon('copy'), 'Copy'),
-        navigator.share ? h('button', { type: 'button', class: 'btn primary', onclick: () => navigator.share({ title: 'Family Flow', text, url }).catch(() => {}) }, icon('share'), 'Share') : null),
+      sendButtons(text, 'Family Flow'),
       h('p', { class: 'faint small', style: { margin: 0 } }, 'Forgot the password? Password reset by email isn’t set up yet — the owner can remove them and send a new invitation.')),
   });
 }
@@ -301,9 +313,7 @@ async function invite(role) {
       body: h('div', { class: 'stack', style: { padding: '8px 0' } },
         h('p', { class: 'muted' }, `Anyone with this link can join ${state.household.name} as ${role === 'adult' ? 'an adult' : 'a child'}. It works once and expires in 7 days.`),
         h('code', { class: 'copy' }, r.url),
-        h('div', { class: 'two' },
-          h('button', { type: 'button', class: 'btn', onclick: () => copyText(r.url) }, icon('copy'), 'Copy'),
-          navigator.share ? h('button', { type: 'button', class: 'btn primary', onclick: () => navigator.share({ title: 'Join our family on Family Flow', text: `Join ${state.household.name} on Family Flow`, url: r.url }).catch(() => {}) }, icon('share'), 'Share') : null)),
+        sendButtons(`Join ${state.household.name} on Family Flow: ${r.url}\nOn iPhone: open it in Safari, create your account, then tap Share → Add to Home Screen.`, 'Join our family on Family Flow')),
     });
   } catch (e) { toast(errorText(e), { bad: true }); }
 }
