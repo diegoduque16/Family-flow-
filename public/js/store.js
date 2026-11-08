@@ -83,10 +83,16 @@ export const state = {
 const snapKey = () => `snap:${state.me.user.id}:${state.me.household.id}`;
 const outboxKey = () => `outbox:${state.me.user.id}:${state.me.household.id}`;
 
-function applyRows(map, rows) {
+// Profiles show up by their label (Mom, Dad…) when they have one; the person's name stays in fullName.
+export function normMember(r) {
+  if (!r || r.deleted) return r;
+  const fullName = r.fullName ?? r.name;
+  return { ...r, fullName, name: r.label || fullName };
+}
+function applyRows(map, rows, norm = (x) => x) {
   for (const r of rows) {
     if (r.deleted) map.delete(r.id);
-    else map.set(r.id, r);
+    else map.set(r.id, norm(r));
   }
 }
 
@@ -106,7 +112,7 @@ export async function loadCached() {
   state.outbox = (await kvGet(outboxKey())) || [];
   if (snap) {
     state.seq = snap.seq; state.household = snap.household; state.lastSyncAt = snap.lastSyncAt || 0;
-    state.members = new Map(snap.members.map((x) => [x.id, x]));
+    state.members = new Map(snap.members.map((x) => [x.id, normMember(x)]));
     state.events = new Map(snap.events.map((x) => [x.id, x]));
     state.lists = new Map(snap.lists.map((x) => [x.id, x]));
     state.tasks = new Map(snap.tasks.map((x) => [x.id, x]));
@@ -132,7 +138,7 @@ export function sync({ full = false } = {}) {
       const data = await api('GET', `/api/sync?since=${full ? 0 : state.seq}`);
       if (data.full) { state.members = new Map(); state.events = new Map(); state.lists = new Map(); state.tasks = new Map(); state.groups = new Map(); }
       state.household = data.household;
-      applyRows(state.members, data.members);
+      applyRows(state.members, data.members, normMember);
       applyRows(state.events, data.events);
       applyRows(state.lists, data.lists);
       applyRows(state.tasks, data.tasks);
@@ -179,7 +185,7 @@ export async function mutate({ method, path, body, kind, optimistic, offlineOk =
     const row = res.event || res.task || res.member || res.list || res.group || res.series;
     for (const r of [row, res.event && res.series ? res.series : null]) {
       if (!r || !kind) continue;
-      if (r.deleted) state[kind].delete(r.id); else state[kind].set(r.id, r);
+      if (r.deleted) state[kind].delete(r.id); else state[kind].set(r.id, kind === 'members' ? normMember(r) : r);
     }
     if (optimistic && optimistic.remove && kind) state[kind].delete(optimistic.id);
     await persist();

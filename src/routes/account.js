@@ -4,12 +4,7 @@ import { HttpError, json, readJson, validate, v, uid, now, randomToken, sha256, 
 import { one, all, run, nextSeq, audit, rateLimit } from '../lib/db.js';
 import { hashPassword, verifyPassword, createSession, sessionCookie, clearCookie, requireRole } from '../lib/auth.js';
 
-export const DEFAULT_MEMBERS = [
-  { name: 'Mom', color: '#E76F51', kind: 'adult' },
-  { name: 'Dad', color: '#2A9D8F', kind: 'adult' },
-  { name: 'Kiddo 1', color: '#E9A23B', kind: 'child' },
-  { name: 'Kiddo 2', color: '#7C6CF2', kind: 'child' },
-];
+// (No placeholder profiles: everyone gets a profile with their own name and an optional label like Mom or Dad.)
 const DEFAULT_LISTS = [
   { name: 'To-do', kind: 'todo' },
   { name: 'Groceries', kind: 'shopping' },
@@ -19,30 +14,40 @@ const DEFAULT_LISTS = [
 const ip = (req) => req.headers.get('cf-connecting-ip') || 'local';
 
 export function memberOut(r) {
-  return { id: r.id, name: r.name, color: r.color, kind: r.kind, avatar: r.avatar || null, sort: r.sort, version: r.version, seq: r.seq, deleted: !!r.deleted_at };
+  return { id: r.id, name: r.name, label: r.label || null, color: r.color, kind: r.kind, avatar: r.avatar || null, sort: r.sort, version: r.version, seq: r.seq, deleted: !!r.deleted_at };
 }
 
-async function createHousehold(db, { name, timezone }, userId) {
+// The name a profile shows up as in the app ("Mom"), falling back to the person's name.
+export const memberLabel = (m) => (m && (m.label || m.name)) || '';
+export const PROFILE_COLORS = ['#E76F51', '#2A9D8F', '#E9A23B', '#7C6CF2', '#D9487D', '#3A86FF', '#6A994E', '#8D6E63', '#F4A261', '#264653', '#9B5DE5', '#00A6A6'];
+const cleanLabel = (x) => { const t = String(x || '').trim().slice(0, 30); return t || null; };
+
+// Creates a family profile for a person (their own name, optional label) and returns its id.
+async function createProfileFor(db, householdId, { name, label = null, kind = 'adult' }) {
+  const used = (await all(db, 'SELECT color FROM members WHERE household_id = ? AND deleted_at IS NULL', householdId)).map((r) => r.color);
+  const count = await one(db, 'SELECT COUNT(*) AS n FROM members WHERE household_id = ? AND deleted_at IS NULL', householdId);
+  const id = uid('m_');
+  const t = now();
+  await run(db, 'INSERT INTO members (id, household_id, name, color, kind, sort, version, seq, created_at, updated_at, label) VALUES (?,?,?,?,?,?,1,?,?,?,?)',
+    id, householdId, String(name || 'Me').trim().slice(0, 40), PROFILE_COLORS.find((c) => !used.includes(c)) || PROFILE_COLORS[count.n % PROFILE_COLORS.length], kind, count.n,
+    await nextSeq(db, householdId), t, t, cleanLabel(label));
+  return id;
+}
+
+async function createHousehold(db, { name, timezone }, userId, { userName = null, label = null } = {}) {
   const id = uid('hh_');
   const t = now();
   await run(db, 'INSERT INTO households (id, name, timezone, ics_token, seq, created_at) VALUES (?,?,?,?,0,?)', id, name, timezone, randomToken(24), t);
+  // The creator gets a profile with their own name; others are added (or join) with theirs.
+  if (!userName) userName = ((await one(db, 'SELECT name FROM users WHERE id = ?', userId)) || {}).name;
+  const myProfile = await createProfileFor(db, id, { name: userName, label, kind: 'adult' });
   let sort = 0;
-  const memberIds = [];
-  for (const m of DEFAULT_MEMBERS) {
-    const seq = await nextSeq(db, id);
-    const mid = uid('m_');
-    memberIds.push(mid);
-    await run(db, 'INSERT INTO members (id, household_id, name, color, kind, sort, version, seq, created_at, updated_at) VALUES (?,?,?,?,?,?,1,?,?,?)',
-      mid, id, m.name, m.color, m.kind, sort++, seq, t, t);
-  }
-  sort = 0;
   for (const l of DEFAULT_LISTS) {
     const seq = await nextSeq(db, id);
     await run(db, 'INSERT INTO lists (id, household_id, name, kind, sort, version, seq, created_at, updated_at) VALUES (?,?,?,?,?,1,?,?,?)',
       uid('l_'), id, l.name, l.kind, sort++, seq, t, t);
   }
-  // Not linked to a profile yet: the app asks “Which profile is you?” on first open (so the creator isn't assumed to be Mom).
-  await run(db, 'INSERT INTO memberships (household_id, user_id, role, member_id, created_at) VALUES (?,?,?,?,?)', id, userId, 'owner', null, t);
+  await run(db, 'INSERT INTO memberships (household_id, user_id, role, member_id, created_at) VALUES (?,?,?,?,?)', id, userId, 'owner', myProfile, t);
   await run(db, 'UPDATE users SET current_household_id = ? WHERE id = ?', id, userId);
   await audit(db, { householdId: id, userId, action: 'household.create' });
   return id;
@@ -55,6 +60,7 @@ const signupSchema = v.object({
   householdName: v.string({ min: 1, max: 60 }).optional(),
   timezone: v.string({ max: 60 }).optional(),
   inviteToken: v.string({ max: 100 }).optional(),
+  label: v.string({ max: 30 }).optional(), // how they want to show up, e.g. Mom
 });
 
 export async function signup(req, env) {
@@ -74,8 +80,8 @@ export async function signup(req, env) {
   const userId = uid('u_');
   await run(db, 'INSERT INTO users (id, email, name, pw_hash, pw_salt, pw_iter, created_at) VALUES (?,?,?,?,?,?,?)',
     userId, email, body.name, pw.hash, pw.salt, pw.iter, now());
-  if (invite) await acceptInvite(db, invite, userId);
-  else await createHousehold(db, { name: body.householdName, timezone: tz }, userId);
+  if (invite) await acceptInvite(db, invite, userId, { label: body.label });
+  else await createHousehold(db, { name: body.householdName, timezone: tz }, userId, { userName: body.name, label: body.label });
   await audit(db, { userId, action: 'user.signup' });
   const token = await createSession(db, userId, req.headers.get('user-agent'));
   return json({ ok: true }, 201, { 'set-cookie': sessionCookie(token, req) });
@@ -180,6 +186,7 @@ const memberSchema = v.object({
   kind: v.string({ oneOf: ['adult', 'child'] }).default('adult'),
   sort: v.number({ int: true, min: 0, max: 999 }).optional(),
   avatar: v.string({ max: AVATAR_MAX }).nullable(),
+  label: v.string({ max: 30 }).nullable(),
 });
 
 export async function createMember(req, env, ctx) {
@@ -191,8 +198,8 @@ export async function createMember(req, env, ctx) {
   const seq = await nextSeq(db, ctx.household.id);
   const id = uid('m_');
   const t = now();
-  await run(db, 'INSERT INTO members (id, household_id, name, color, kind, sort, version, seq, created_at, updated_at, avatar) VALUES (?,?,?,?,?,?,1,?,?,?,?)',
-    id, ctx.household.id, body.name, body.color, body.kind, body.sort ?? count.n, seq, t, t, cleanAvatar(body.avatar));
+  await run(db, 'INSERT INTO members (id, household_id, name, color, kind, sort, version, seq, created_at, updated_at, avatar, label) VALUES (?,?,?,?,?,?,1,?,?,?,?,?)',
+    id, ctx.household.id, body.name, body.color, body.kind, body.sort ?? count.n, seq, t, t, cleanAvatar(body.avatar), cleanLabel(body.label));
   await audit(db, { householdId: ctx.household.id, userId: ctx.user.id, action: 'member.create', refType: 'member', refId: id });
   return json({ member: memberOut(await one(db, 'SELECT * FROM members WHERE id = ?', id)) }, 201);
 }
@@ -202,6 +209,7 @@ export async function updateMember(req, env, ctx, { id }) {
   const body = await readJson(req);
   const patch = validate(v.object({
     avatar: v.string({ max: AVATAR_MAX }).nullable(),
+    label: v.string({ max: 30 }).nullable(),
     name: v.string({ min: 1, max: 40 }).optional(),
     color: v.string({ pattern: COLOR_RE }).optional(),
     kind: v.string({ oneOf: ['adult', 'child'] }).optional(),
@@ -214,8 +222,9 @@ export async function updateMember(req, env, ctx, { id }) {
   if (cur.version !== patch.version) throw new HttpError(409, 'conflict', 'Someone else changed this profile. Here is the latest version.', { current: memberOut(cur) });
   const seq = await nextSeq(db, ctx.household.id);
   const avatar = 'avatar' in body ? cleanAvatar(patch.avatar) : cur.avatar;
-  await run(db, 'UPDATE members SET name = ?, color = ?, kind = ?, sort = ?, avatar = ?, version = version + 1, seq = ?, updated_at = ? WHERE id = ?',
-    patch.name ?? cur.name, patch.color ?? cur.color, patch.kind ?? cur.kind, patch.sort ?? cur.sort, avatar, seq, now(), id);
+  const label = 'label' in body ? cleanLabel(patch.label) : cur.label;
+  await run(db, 'UPDATE members SET name = ?, color = ?, kind = ?, sort = ?, avatar = ?, label = ?, version = version + 1, seq = ?, updated_at = ? WHERE id = ?',
+    patch.name ?? cur.name, patch.color ?? cur.color, patch.kind ?? cur.kind, patch.sort ?? cur.sort, avatar, label, seq, now(), id);
   return json({ member: memberOut(await one(db, 'SELECT * FROM members WHERE id = ?', id)) });
 }
 
@@ -243,8 +252,15 @@ async function findInvite(db, token) {
   return inv;
 }
 
-async function acceptInvite(db, inv, userId) {
+async function acceptInvite(db, inv, userId, { label = null } = {}) {
   const exists = await one(db, 'SELECT 1 FROM memberships WHERE household_id = ? AND user_id = ?', inv.household_id, userId);
+  if (!exists && !inv.member_id) {
+    // No profile picked for this invitation: give them their own, with their name.
+    const u = await one(db, 'SELECT name FROM users WHERE id = ?', userId);
+    inv = { ...inv, member_id: await createProfileFor(db, inv.household_id, { name: u ? u.name : 'New member', label, kind: inv.role === 'child' ? 'child' : 'adult' }) };
+  } else if (!exists && label) {
+    await run(db, 'UPDATE members SET label = COALESCE(label, ?), seq = ? WHERE id = ?', cleanLabel(label), await nextSeq(db, inv.household_id), inv.member_id);
+  }
   if (!exists) {
     // The owner chose a profile for this invitation: it becomes this person's (one login per profile).
     if (inv.member_id) await run(db, 'UPDATE memberships SET member_id = NULL WHERE household_id = ? AND member_id = ?', inv.household_id, inv.member_id);
@@ -308,12 +324,7 @@ export async function linkMyProfile(req, env, ctx) {
   if (body.createNamed) {
     const count = await one(db, 'SELECT COUNT(*) AS n FROM members WHERE household_id = ? AND deleted_at IS NULL', ctx.household.id);
     if (count.n >= 20) throw new HttpError(422, 'limit', 'A household can have up to 20 family members.');
-    const used = (await all(db, 'SELECT color FROM members WHERE household_id = ? AND deleted_at IS NULL', ctx.household.id)).map((r) => r.color);
-    const palette = ['#E76F51', '#2A9D8F', '#E9A23B', '#7C6CF2', '#D9487D', '#3A86FF', '#6A994E', '#8D6E63', '#F4A261', '#264653', '#9B5DE5', '#00A6A6'];
-    memberId = uid('m_');
-    const t = now();
-    await run(db, 'INSERT INTO members (id, household_id, name, color, kind, sort, version, seq, created_at, updated_at) VALUES (?,?,?,?,?,?,1,?,?,?)',
-      memberId, ctx.household.id, body.createNamed.trim(), palette.find((c) => !used.includes(c)) || palette[0], ctx.role === 'child' ? 'child' : 'adult', count.n, await nextSeq(db, ctx.household.id), t, t);
+    memberId = await createProfileFor(db, ctx.household.id, { name: body.createNamed, kind: ctx.role === 'child' ? 'child' : 'adult' });
   } else if (memberId) {
     await checkProfile(db, ctx, memberId);
     const taken = await one(db, 'SELECT u.name FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.household_id = ? AND m.member_id = ? AND m.user_id != ?', ctx.household.id, memberId, ctx.user.id);

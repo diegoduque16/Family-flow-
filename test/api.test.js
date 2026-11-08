@@ -7,9 +7,11 @@ import { makeEnv, client, signedUp, D1Shim } from './harness.js';
 
 test('sign-up creates a household with default profiles and lists; auth + CSRF enforced', async () => {
   const env = makeEnv();
-  const { c, me, sync } = await signedUp(env);
+  const { c, me, sync } = await signedUp(env, { name: 'Diego Duque', label: 'Dad', demo: false });
   assert.equal(me.role, 'owner');
-  assert.deepEqual(sync.members.map((m) => m.name), ['Mom', 'Dad', 'Kiddo 1', 'Kiddo 2']);
+  // No placeholder profiles: just the creator, with their own name and chosen label, linked to their login.
+  assert.deepEqual(sync.members.map((m) => [m.name, m.label]), [['Diego Duque', 'Dad']]);
+  assert.equal(me.memberId, sync.members[0].id);
   assert.deepEqual(sync.lists.map((l) => l.name), ['To-do', 'Groceries', 'Shopping']);
   const anon = client(env);
   assert.equal((await anon.get('/api/sync')).status, 401);

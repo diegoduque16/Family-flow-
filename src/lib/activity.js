@@ -7,8 +7,8 @@ import { humanWhen } from './reminders.js';
 
 export async function actorName(db, ctx) {
   if (ctx.memberId) {
-    const m = await one(db, 'SELECT name FROM members WHERE id = ?', ctx.memberId);
-    if (m && m.name) return m.name;
+    const m = await one(db, 'SELECT name, label FROM members WHERE id = ?', ctx.memberId);
+    if (m && (m.label || m.name)) return m.label || m.name;
   }
   return String(ctx.user.name || 'Someone').split(' ')[0];
 }

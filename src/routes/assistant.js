@@ -86,8 +86,8 @@ function systemPrompt(ctx, members, lists, upcoming) {
   return `You are Family Flow, a warm, efficient assistant that helps a family organise their life.
 
 Today is ${wd} ${today}, the time is ${time}, household time zone ${tz}.
-The person talking to you is ${ctx.user.name}${me ? ` (family profile "${me.name}")` : ''}.
-Family members: ${members.map((x) => `${x.name}${x.kind === 'child' ? ' (child)' : ''}`).join(', ')}.
+The person talking to you is ${ctx.user.name}${me ? ` (family profile "${me.label || me.name}")` : ''}.
+Family members: ${members.map((x) => `${x.label ? `${x.label} (${x.name})` : x.name}${x.kind === 'child' ? ' (child)' : ''}`).join(', ')}. Either the label or the name can be used for assignees.
 Lists: ${lists.map((l) => `${l.name} (${l.kind})`).join(', ')}.
 Upcoming in the next 7 days: ${upcoming.length ? upcoming.map((o) => `${o.occurrence.start_local} ${o.title}`).join('; ') : 'nothing scheduled'}.
 
@@ -131,7 +131,8 @@ function resolveMembers(names, members) {
   const unknown = [];
   for (const n of names || []) {
     const k = String(n).trim().toLowerCase();
-    const m = members.find((x) => x.name.toLowerCase() === k) || members.find((x) => x.name.toLowerCase().replace(/\s+/g, '') === k.replace(/\s+/g, ''));
+    const keys = (x) => [x.name, x.label, String(x.name || '').split(' ')[0]].filter(Boolean).map((s) => s.toLowerCase());
+    const m = members.find((x) => keys(x).includes(k)) || members.find((x) => keys(x).some((s) => s.replace(/\s+/g, '') === k.replace(/\s+/g, '')));
     if (m) ids.push(m.id); else unknown.push(n);
   }
   return { ids, unknown };
@@ -145,7 +146,7 @@ async function handleTool(env, ctx, conversationId, call, members, lists, create
     let to = /^\d{4}-\d{2}-\d{2}$/.test(input.to) ? input.to : from;
     const toExcl = utcToLocal(localToUtc(to, 'UTC') + 86400000, 'UTC', false);
     const occ = await listOccurrences(db, ctx, from, toExcl);
-    const names = Object.fromEntries(members.map((m) => [m.id, m.name]));
+    const names = Object.fromEntries(members.map((m) => [m.id, m.label || m.name]));
     return { content: JSON.stringify(occ.slice(0, 40).map((o) => ({
       title: o.title, start: o.occurrence.start_local, end: o.occurrence.end_local, allDay: o.allDay,
       who: o.assignees.map((a) => names[a]).filter(Boolean), location: o.location ? o.location.name || o.location.address : undefined,
@@ -266,7 +267,7 @@ export async function chat(req, env, ctx) {
   }
   const history = (await all(db, 'SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY created_at, rowid', conv.id))
     .map((m) => ({ role: m.role, content: parseJsonCol(m.content, m.content) }));
-  const members = await all(db, 'SELECT id, name, kind FROM members WHERE household_id = ? AND deleted_at IS NULL ORDER BY sort', ctx.household.id);
+  const members = await all(db, 'SELECT id, name, label, kind FROM members WHERE household_id = ? AND deleted_at IS NULL ORDER BY sort', ctx.household.id);
   const lists = (await all(db, 'SELECT id, name, kind, group_id FROM lists WHERE household_id = ? AND deleted_at IS NULL ORDER BY sort', ctx.household.id))
     .filter((l) => listVisible(l, ctx)).map(({ id, name, kind }) => ({ id, name, kind }));
   const today = todayLocal(ctx.household.timezone);

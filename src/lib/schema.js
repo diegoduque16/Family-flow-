@@ -22,6 +22,7 @@ const COLUMNS = [
   ['events', 'icon', 'TEXT'],                                       // emoji chosen for the activity
   ['lists', 'group_id', 'TEXT'],
   ['members', 'avatar', 'TEXT'],                                    // data:image/... photo or an emoji
+  ['members', 'label', 'TEXT'],                                     // how they show up in the app, e.g. Mom, Dad, Grandma
   ['memberships', 'notify_activity', 'INTEGER NOT NULL DEFAULT 1'], // family-activity alerts on/off
   ['households', 'holidays', 'TEXT'],                               // 'US' | 'none' | null (automatic from time zone)
 ];

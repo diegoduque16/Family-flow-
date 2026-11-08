@@ -98,10 +98,18 @@ export function client(env, origin = 'https://ff.test') {
   };
 }
 
-export async function signedUp(env, { name = 'Ana', email = `ana${Math.random().toString(36).slice(2, 8)}@example.com`, household = 'Duque Family', timezone = 'America/New_York', inviteToken } = {}) {
+// demo: for a new household, also set up the demo family most tests use (creator's profile renamed Mom, plus Dad, Kiddo 1, Kiddo 2).
+export async function signedUp(env, { name = 'Ana', email = `ana${Math.random().toString(36).slice(2, 8)}@example.com`, household = 'Duque Family', timezone = 'America/New_York', inviteToken, demo = true, label } = {}) {
   const c = client(env);
-  const r = await c.post('/api/auth/signup', { name, email, password: 'correct horse battery', householdName: inviteToken ? undefined : household, timezone, inviteToken });
+  const r = await c.post('/api/auth/signup', { name, email, password: 'correct horse battery', householdName: inviteToken ? undefined : household, timezone, inviteToken, label });
   if (r.status !== 201) throw new Error(`signup failed ${r.status} ${JSON.stringify(r.data)}`);
+  if (demo && !inviteToken) {
+    const first = (await c.get('/api/sync')).data.members[0];
+    await c.patch(`/api/members/${first.id}`, { name: 'Mom', version: first.version });
+    await c.post('/api/members', { name: 'Dad', color: '#2A9D8F', kind: 'adult' });
+    await c.post('/api/members', { name: 'Kiddo 1', color: '#E9A23B', kind: 'child' });
+    await c.post('/api/members', { name: 'Kiddo 2', color: '#7C6CF2', kind: 'child' });
+  }
   const me = await c.get('/api/me');
   const s = await c.get('/api/sync');
   return { c, me: me.data, sync: s.data, email };

@@ -172,8 +172,8 @@ test('alerts use the suggested icon when none was picked, and none when turned o
 test('profiles: creator picks who they are; one login per profile; invites can pre-assign a profile', async () => {
   const env = makeEnv();
   const a = await signedUp(env, { name: 'Diego Duque' });
-  assert.equal(a.me.memberId, null, 'the creator is not assumed to be Mom');
-  const [mom, dad] = a.sync.members;
+  const [mom, dad] = (await a.c.get('/api/sync')).data.members;
+  assert.equal(a.me.memberId, mom.id, 'the creator gets the first profile (their own)');
   assert.equal((await a.c.patch('/api/me/profile', { memberId: dad.id })).status, 200);
   assert.equal((await a.c.get('/api/me')).data.memberId, dad.id);
   // invitation for Mom's profile
@@ -184,9 +184,11 @@ test('profiles: creator picks who they are; one login per profile; invites can p
   const taken = await h.c.patch('/api/me/profile', { memberId: dad.id });
   assert.equal(taken.status, 409);
   assert.match(taken.data.error.message, /already Diego/);
-  // "I'm not listed": creates a profile with your name
-  const k = await signedUp(env, { name: 'Leo', inviteToken: (await a.c.post('/api/invites', { role: 'adult' })).data.token });
-  assert.equal(k.me.memberId, null);
+  // joining without a chosen profile gives you your own, with your name and label
+  const k = await signedUp(env, { name: 'Leo Duque', label: 'Uncle Leo', inviteToken: (await a.c.post('/api/invites', { role: 'adult' })).data.token });
+  const leo = (await k.c.get('/api/sync')).data.members.find((m) => m.id === k.me.memberId);
+  assert.deepEqual([leo.name, leo.label], ['Leo Duque', 'Uncle Leo']);
+  // "I'm not listed": creates another profile with your name
   const made = await k.c.patch('/api/me/profile', { createNamed: 'Uncle Leo' });
   assert.equal(made.status, 200);
   const s = (await k.c.get('/api/sync')).data;
@@ -197,4 +199,20 @@ test('profiles: creator picks who they are; one login per profile; invites can p
   await a.c.patch(`/api/household/people/${hay.id}`, { memberId: dad.id });
   assert.equal((await a.c.get('/api/me')).data.memberId, null);
   assert.equal((await h.c.get('/api/me')).data.memberId, dad.id);
+});
+
+test('labels: how people show up (Mom, Dad) is used by alerts, the assistant and the calendar feed', async () => {
+  const env = makeEnv();
+  const d = await signedUp(env, { name: 'Diego Duque', label: 'Dad', demo: false });
+  const inv = await d.c.post('/api/invites', { role: 'adult' });
+  const hy = await signedUp(env, { name: 'Hayley Duque', label: 'Mom', inviteToken: inv.data.token });
+  await hy.c.post('/api/events', { title: 'Pediatrician', start: '2026-12-10T09:00' });
+  const a = (await d.c.get('/api/notifications')).data.notifications.filter((n) => n.kind === 'activity');
+  assert.match(a[0].title, /^Mom added/);
+  const me = (await d.c.get('/api/sync')).data.members.find((m) => m.id === d.me.memberId);
+  const upd = await d.c.patch(`/api/members/${me.id}`, { version: me.version, label: 'Papa' });
+  assert.equal(upd.data.member.label, 'Papa');
+  assert.equal(upd.data.member.name, 'Diego Duque');
+  const cleared = await d.c.patch(`/api/members/${me.id}`, { version: upd.data.member.version, label: null });
+  assert.equal(cleared.data.member.label, null);
 });

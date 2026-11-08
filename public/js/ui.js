@@ -184,6 +184,14 @@ export function addDaysStr(date, n) {
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
 }
+// "Shows up as" labels: tap a suggestion to fill the box (or type your own).
+export const LABEL_SUGGESTIONS = ['Mom', 'Dad', 'Mama', 'Papa', 'Grandma', 'Grandpa', 'Abuela', 'Abuelo', 'Aunt', 'Uncle', 'Partner', 'Nanny'];
+export function labelInput(value = '', { placeholder = 'e.g. Mom — or leave empty to use the name' } = {}) {
+  const input = h('input', { class: 'input', maxlength: 30, value: value || '', placeholder, autocapitalize: 'words' });
+  const chips = h('div', { class: 'chips', style: { marginTop: '8px' } }, LABEL_SUGGESTIONS.map((l) => h('button', { type: 'button', class: 'chip', style: { minHeight: '32px', padding: '4px 10px', fontSize: '13px' }, onclick: () => { input.value = l; input.dispatchEvent(new Event('input')); } }, l)));
+  return { input, el: h('div', null, input, chips), get value() { return input.value.trim(); } };
+}
+
 // Profile picture: photo, emoji avatar, or initials on the profile colour.
 export function avatarEl(m, { size = 34 } = {}) {
   const a = m && m.avatar;

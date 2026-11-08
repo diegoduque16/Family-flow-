@@ -1,5 +1,5 @@
 // App shell: boot, sign-in/sign-up/join, tab navigation, the universal Add button and voice capture.
-import { h, icon, toast, sheet, closeAllSheets } from './ui.js';
+import { h, icon, toast, sheet, closeAllSheets, labelInput } from './ui.js';
 import { api, state, on, sync, loadCached, startAutoSync, refreshCounts, clearLocalData, resetState } from './store.js';
 import { TodayView, CalendarView, InboxView, AssistantView, assistantDraft } from './views.js';
 import { MoreView, TasksView, FamilyView, GroupsView, PeopleView, PlacesView, SyncView, NotificationsView, HouseholdView, DataView, DiagnosticsView, AccountView } from './more.js';
@@ -32,6 +32,7 @@ function authScreen(mode, invite) {
   const email = h('input', { class: 'input', type: 'email', autocomplete: 'email', inputmode: 'email', autocapitalize: 'none', required: true });
   const pw = h('input', { class: 'input', type: 'password', autocomplete: mode === 'login' ? 'current-password' : 'new-password', minlength: mode === 'login' ? 1 : 8, required: true });
   const hh = h('input', { class: 'input', maxlength: 60, placeholder: 'e.g. The Duque Family' });
+  const lab = labelInput('');
   const err = h('div', { role: 'alert' });
   const btn = h('button', { class: 'btn primary block', type: 'submit' }, mode === 'login' ? 'Sign in' : invite ? `Join ${invite.householdName}` : 'Create our family space');
   const field = (label, input, hint) => h('label', { class: 'field' }, h('span', { class: 'label' }, label), input, hint ? h('p', { class: 'hint' }, hint) : null);
@@ -43,7 +44,7 @@ function authScreen(mode, invite) {
       if (mode === 'login') await api('POST', '/api/auth/login', { email: email.value.trim(), password: pw.value });
       else {
         if (pw.value.length < 8) throw new Error('Use at least 8 characters for your password.');
-        await api('POST', '/api/auth/signup', { name: name.value.trim(), email: email.value.trim(), password: pw.value, timezone: tz,
+        await api('POST', '/api/auth/signup', { name: name.value.trim(), email: email.value.trim(), password: pw.value, timezone: tz, ...(lab.value ? { label: lab.value } : {}),
           ...(invite ? { inviteToken: invite.token } : { householdName: hh.value.trim() || `${name.value.trim().split(' ').slice(-1)[0]} Family` }) });
       }
       location.hash = '#/today';
@@ -53,6 +54,7 @@ function authScreen(mode, invite) {
     } finally { btn.disabled = false; }
   } },
   mode === 'signup' ? field('Your name', name) : null,
+  mode === 'signup' ? h('div', { class: 'field' }, h('span', { class: 'label' }, 'How should you show up in the app? (optional)'), lab.el, h('p', { class: 'hint' }, 'Family members see this on the calendar instead of your name — for example Mom or Dad. You can change it anytime.')) : null,
   field('Email', email),
   field('Password', pw, mode === 'signup' ? 'At least 8 characters.' : null),
   mode === 'signup' && !invite ? field('Family name', hh, 'You can change this later and invite others.') : null,

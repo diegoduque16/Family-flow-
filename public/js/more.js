@@ -1,5 +1,5 @@
 // "More" area: tasks & lists, family profiles, people & invites, places, calendar sync, notifications, household, data, diagnostics, account.
-import { h, icon, toast, sheet, confirmDialog, copyText, initials, avatarEl } from './ui.js';
+import { h, icon, toast, sheet, confirmDialog, copyText, initials, avatarEl, labelInput } from './ui.js';
 import { AVATAR_CHOICES } from './icons.js';
 import { HOLIDAY_REGIONS, isUsZone } from './holidays.js';
 import { micButton, splitItems, cleanTitle } from './voice.js';
@@ -114,17 +114,18 @@ export function FamilyView(rerender) {
   if (!peopleCache) api('GET', '/api/household/people').then(({ people }) => { peopleCache = people; rerender(); }).catch(() => {});
   const loginOf = (m) => (peopleCache || []).find((p) => p.member_id === m.id);
   return h('div', { class: 'page' }, back('Family profiles'),
-    h('p', { class: 'muted' }, 'Profiles are who events and tasks are for. Add a photo or an avatar so everyone is easy to spot. Profiles don’t need their own login — invite people separately if they should sign in.'),
+    h('p', { class: 'muted' }, 'Everyone in the family, with how they show up in the app (Mom, Dad, Grandma…) and a photo or avatar. Kids and relatives don’t need a login — invite people who should sign in from People & invites.'),
     h('div', { class: 'card' }, h('ul', { class: 'list' }, membersList().map((m) => h('li', null,
       h('button', { type: 'button', class: 'item', onclick: () => memberEditor(m, rerender), disabled: !canEdit() },
         avatarEl(m, { size: 40 }),
-        h('span', { class: 'grow' }, h('div', { class: 'title' }, m.name, loginOf(m) ? h('span', { class: 'faint' }, ` · ${loginOf(m).id === state.me.user.id ? 'you' : loginOf(m).name.split(' ')[0]}`) : null), h('div', { class: 'meta' }, [m.kind === 'child' ? 'Child' : 'Adult', ...groupsList().filter((g) => g.memberIds.includes(m.id)).map((g) => g.name)].join(' · '))),
+        h('span', { class: 'grow' }, h('div', { class: 'title' }, m.name, loginOf(m) && loginOf(m).id === state.me.user.id ? h('span', { class: 'faint' }, ' · you') : null), h('div', { class: 'meta' }, [m.label && m.fullName !== m.label ? m.fullName : null, m.kind === 'child' ? 'Child' : 'Adult', ...groupsList().filter((g) => g.memberIds.includes(m.id)).map((g) => g.name)].filter(Boolean).join(' · '))),
         canEdit() ? icon('chev', 'chev') : null))))),
     canEdit() ? h('button', { type: 'button', class: 'btn block primary', onclick: () => memberEditor(null, rerender) }, icon('plus'), 'Add a profile') : null,
     h('button', { type: 'button', class: 'btn block', onclick: () => openWhoAmI(() => { peopleCache = null; rerender(); }) }, 'Which profile is me?'));
 }
 function memberEditor(m, rerender) {
-  const name = h('input', { class: 'input', value: m ? m.name : '', maxlength: 40, autofocus: true, placeholder: 'e.g. Grandma' });
+  const name = h('input', { class: 'input', value: m ? (m.fullName ?? m.name) : '', maxlength: 40, autofocus: true, placeholder: 'e.g. Rosa Duque' });
+  const lab = labelInput(m ? m.label || '' : '');
   let color = m ? m.color : COLORS.find((c) => !membersList().some((x) => x.color === c)) || COLORS[0];
   const sw = h('div', { class: 'colors', role: 'radiogroup', 'aria-label': 'Colour' });
   const renderSw = () => { sw.replaceChildren(...COLORS.map((c) => h('button', { type: 'button', class: 'swatch', '--c': c, role: 'radio', 'aria-checked': String(c === color), 'aria-label': c, onclick: () => { color = c; renderSw(); if (typeof renderAvatar === 'function') renderAvatar(); } }))); };
@@ -138,7 +139,7 @@ function memberEditor(m, rerender) {
   const fileIn = h('input', { type: 'file', accept: 'image/*', hidden: true });
   const emojiRow = h('div', { class: 'icon-grid', role: 'group', 'aria-label': 'Avatars', hidden: true, style: { marginTop: '8px' } });
   const renderAvatar = () => {
-    preview.replaceChildren(avatarEl({ name: name.value || '?', color, avatar }, { size: 64 }));
+    preview.replaceChildren(avatarEl({ name: lab.value || name.value || '?', color, avatar }, { size: 64 }));
     emojiRow.replaceChildren(...AVATAR_CHOICES.map((a) => h('button', { type: 'button', class: 'chip', 'aria-label': `Avatar ${a}`, 'aria-pressed': String(avatar === a), onclick: () => { avatar = a; renderAvatar(); } }, a)));
   };
   fileIn.addEventListener('change', async () => {
@@ -148,6 +149,7 @@ function memberEditor(m, rerender) {
     try { avatar = await photoToDataUrl(f); renderAvatar(); } catch (e) { err.replaceChildren(h('div', { class: 'banner bad' }, e.message || 'Could not use that picture.')); }
   });
   name.addEventListener('input', renderAvatar);
+  lab.input.addEventListener('input', renderAvatar);
   const picture = h('div', { class: 'field' }, h('span', { class: 'label' }, 'Picture'),
     h('div', { class: 'avatar-edit' }, preview,
       h('div', { class: 'stack', style: { gap: '6px' } },
@@ -159,7 +161,9 @@ function memberEditor(m, rerender) {
     emojiRow, fileIn);
   const s = sheet({
     title: m ? 'Edit profile' : 'New profile',
-    body: h('div', null, h('label', { class: 'field' }, h('span', { class: 'label' }, 'Name'), name), picture, h('div', { class: 'field' }, h('span', { class: 'label' }, 'Colour'), sw),
+    body: h('div', null, h('label', { class: 'field' }, h('span', { class: 'label' }, 'Name'), name),
+      h('div', { class: 'field' }, h('span', { class: 'label' }, 'Shows up as'), lab.el, h('p', { class: 'hint' }, 'What the family sees on the calendar and in alerts — e.g. Mom, Dad, Grandma. Empty = the name.')),
+      picture, h('div', { class: 'field' }, h('span', { class: 'label' }, 'Colour'), sw),
       h('label', { class: 'field' }, h('span', { class: 'label' }, 'Type'), kind), err),
     foot: [
       m ? h('button', { type: 'button', class: 'btn danger', onclick: async () => {
@@ -168,7 +172,7 @@ function memberEditor(m, rerender) {
       } }, 'Remove') : h('button', { type: 'button', class: 'btn', onclick: () => s.close() }, 'Cancel'),
       h('button', { type: 'button', class: 'btn primary', onclick: async () => {
         if (!name.value.trim()) { err.replaceChildren(h('p', { class: 'err' }, 'Enter a name.')); return; }
-        const body = { name: name.value.trim(), color, kind: kind.value, avatar };
+        const body = { name: name.value.trim(), label: lab.value || null, color, kind: kind.value, avatar };
         try {
           if (m) await mutate({ method: 'PATCH', path: `/api/members/${m.id}`, body: { ...body, version: m.version }, kind: 'members', offlineOk: false });
           else await mutate({ method: 'POST', path: '/api/members', body, kind: 'members', offlineOk: false });

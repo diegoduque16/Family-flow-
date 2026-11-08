@@ -596,7 +596,7 @@ export async function icsFeed(req, env, ctx, { token }) {
   const db = env.DB;
   const hh = await one(db, 'SELECT * FROM households WHERE ics_token = ?', token.replace(/\.ics$/, ''));
   if (!hh) return new Response('Not found', { status: 404 });
-  const members = Object.fromEntries((await all(db, 'SELECT id, name FROM members WHERE household_id = ?', hh.id)).map((m) => [m.id, m.name]));
+  const members = Object.fromEntries((await all(db, 'SELECT id, name, label FROM members WHERE household_id = ?', hh.id)).map((m) => [m.id, m.label || m.name]));
   const rows = await all(db, "SELECT * FROM events WHERE household_id = ? AND deleted_at IS NULL AND visibility = 'shared' AND group_id IS NULL AND source_id IS NULL AND (series_end_utc IS NULL OR series_end_utc > ?)", hh.id, now() - 180 * 86400000);
   const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Family Flow//EN', 'CALSCALE:GREGORIAN', `X-WR-CALNAME:${icsEscape(hh.name)} (Family Flow)`, `X-WR-TIMEZONE:${hh.timezone}`];
   for (const r of rows) {
