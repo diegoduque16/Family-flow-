@@ -17,7 +17,7 @@ async function checkMembers(db, ctx, ids) {
 }
 
 // Re-send everything limited to this group in the sync feed, so people who joined see it and people who left drop it.
-async function touchGroupItems(db, householdId, groupId) {
+export async function touchGroupItems(db, householdId, groupId) {
   for (const table of ['events', 'lists']) {
     const rows = await all(db, `SELECT id FROM ${table} WHERE household_id = ? AND group_id = ?`, householdId, groupId);
     for (const r of rows) await run(db, `UPDATE ${table} SET seq = ? WHERE id = ?`, await nextSeq(db, householdId), r.id);
@@ -77,6 +77,18 @@ export async function deleteGroup(req, env, ctx, { id }) {
   await run(db, 'UPDATE family_groups SET deleted_at = ?, version = version + 1, seq = ? WHERE id = ?', now(), await nextSeq(db, ctx.household.id), id);
   await audit(db, { householdId: ctx.household.id, userId: ctx.user.id, action: 'group.delete', refType: 'group', refId: id });
   return json({ ok: true });
+}
+
+// Adds a profile to a group (used when someone joins with a group link).
+export async function addToGroup(db, householdId, groupId, memberId) {
+  const g = await one(db, 'SELECT * FROM family_groups WHERE id = ? AND household_id = ? AND deleted_at IS NULL', groupId, householdId);
+  if (!g || !memberId) return false;
+  const ids = parseJsonCol(g.member_ids, []);
+  if (ids.includes(memberId)) return false;
+  ids.push(memberId);
+  await run(db, 'UPDATE family_groups SET member_ids = ?, version = version + 1, seq = ?, updated_at = ? WHERE id = ?', JSON.stringify(ids), await nextSeq(db, householdId), now(), groupId);
+  await touchGroupItems(db, householdId, groupId);
+  return true;
 }
 
 // Validates a groupId sent with an event or list; returns it or null.

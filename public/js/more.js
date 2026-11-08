@@ -224,6 +224,20 @@ export function GroupsView(rerender) {
     h('p', { class: 'faint small' }, 'Groups are made of family profiles. Someone sees a group’s events when their login is linked to a profile in the group (People & invites → Edit).'));
 }
 
+async function groupLink(g) {
+  try {
+    const r = await api('POST', '/api/invites', { groupId: g.id });
+    const text = `Join our “${g.name}” on Family Flow — the ${state.household.name} calendar: ${r.url}\nCreate your account with your name (you can choose how you show up, like Abuela or Uncle). On iPhone, open it in Safari, then Share → Add to Home Screen.`;
+    sheet({
+      title: `${g.name} link`,
+      body: h('div', { class: 'stack', style: { padding: '8px 0' } },
+        h('p', { class: 'muted' }, `Anyone with this link can join ${state.household.name} and will be in “${g.name}”. Up to ${r.maxUses} people, for ${r.expiresInDays} days. Already in the family? Opening it adds them to the group.`),
+        h('code', { class: 'copy' }, r.url),
+        sendButtons(text, `Join ${g.name} on Family Flow`)),
+    });
+  } catch (e) { toast(errorText(e), { bad: true }); }
+}
+
 function groupEditor(g, rerender) {
   const name = h('input', { class: 'input', value: g ? g.name : '', maxlength: 40, autofocus: !g, placeholder: 'e.g. Extended family' });
   const set = new Set(g ? g.memberIds : []);
@@ -236,7 +250,12 @@ function groupEditor(g, rerender) {
   const s = sheet({
     title: g ? 'Edit group' : 'New group',
     body: h('div', null, h('label', { class: 'field' }, h('span', { class: 'label' }, 'Name'), name),
-      h('div', { class: 'field' }, h('span', { class: 'label' }, 'Who’s in it'), chips, h('p', { class: 'hint' }, 'Missing someone? Add them in More → Family profiles first.')), err),
+      h('div', { class: 'field' }, h('span', { class: 'label' }, 'Who’s in it'), chips, h('p', { class: 'hint' }, 'Missing someone? Add them in More → Family profiles, or send them the group link below.')),
+      g ? h('div', { class: 'card', style: { padding: '12px', margin: '6px 0 10px' } },
+        h('div', { style: { fontWeight: 650 } }, `Invite people to ${g.name}`),
+        h('p', { class: 'hint', style: { margin: '4px 0 10px' } }, 'One link for a group chat: everyone who joins with it gets their own profile and lands in this group. Works for up to 30 people for 14 days.'),
+        h('button', { type: 'button', class: 'btn block primary', onclick: () => { s.close(); groupLink(g); } }, icon('share'), 'Get the group link')) : null,
+      err),
     foot: [
       g ? h('button', { type: 'button', class: 'btn danger', onclick: async () => {
         if (!(await confirmDialog(`Delete “${g.name}”?`, 'Events and lists shared with this group will become visible to the whole family.', 'Delete', true))) return;

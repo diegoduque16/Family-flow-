@@ -65,7 +65,7 @@ function authScreen(mode, invite) {
   app.replaceChildren(h('main', { class: 'auth' }, h('div', { class: 'box' },
     h('img', { class: 'logo', src: '/icons/icon.svg', alt: '' }),
     h('h1', null, mode === 'login' ? 'Welcome back' : invite ? 'You’re invited' : 'Family Flow'),
-    h('p', { class: 'lead' }, invite ? `Join ${invite.householdName} on Family Flow as ${invite.role === 'adult' ? 'an adult' : 'a child'}.` : mode === 'login' ? 'Sign in to your family’s calendar.' : 'One calendar, one to-do list, one assistant for the whole family.'),
+    h('p', { class: 'lead' }, invite ? (invite.groupName ? `Join ${invite.householdName} on Family Flow — you’ll be part of “${invite.groupName}”.` : `Join ${invite.householdName} on Family Flow as ${invite.role === 'adult' ? 'an adult' : 'a child'}.`) : mode === 'login' ? 'Sign in to your family’s calendar.' : 'One calendar, one to-do list, one assistant for the whole family.'),
     form, other)));
   setTimeout(() => (mode === 'signup' ? name : email).focus(), 30);
 }
@@ -79,10 +79,10 @@ async function joinFlow(token, wantLogin) {
   const invite = { ...info, token };
   if (state.me) {
     app.replaceChildren(h('main', { class: 'auth' }, h('div', { class: 'box' }, h('h1', null, 'You’re invited'),
-      h('p', { class: 'lead' }, `Join ${info.householdName} as ${info.role === 'adult' ? 'an adult' : 'a child'}? You’re signed in as ${state.me.user.email}.`),
+      h('p', { class: 'lead' }, info.groupName ? `Join “${info.groupName}” in ${info.householdName}? You’re signed in as ${state.me.user.email}.` : `Join ${info.householdName} as ${info.role === 'adult' ? 'an adult' : 'a child'}? You’re signed in as ${state.me.user.email}.`),
       h('button', { class: 'btn primary block', type: 'button', onclick: async () => {
         try { await api('POST', `/api/invites/${encodeURIComponent(token)}/accept`, {}); await clearLocalData(); location.hash = '#/today'; await boot(); } catch (e) { toast(errorText(e), { bad: true }); }
-      } }, `Join ${info.householdName}`),
+      } }, info.groupName ? `Join ${info.groupName}` : `Join ${info.householdName}`),
       h('a', { class: 'btn block', href: '#/today', style: { marginTop: '10px' } }, 'Not now'))));
     return;
   }

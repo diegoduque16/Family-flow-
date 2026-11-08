@@ -24,6 +24,9 @@ const COLUMNS = [
   ['members', 'avatar', 'TEXT'],                                    // data:image/... photo or an emoji
   ['members', 'label', 'TEXT'],                                     // how they show up in the app, e.g. Mom, Dad, Grandma
   ['memberships', 'notify_activity', 'INTEGER NOT NULL DEFAULT 1'], // family-activity alerts on/off
+  ['invites', 'group_id', 'TEXT'],                                 // group link: joiners are added to this family group
+  ['invites', 'max_uses', 'INTEGER NOT NULL DEFAULT 1'],            // group links can be used by several people
+  ['invites', 'uses', 'INTEGER NOT NULL DEFAULT 0'],
   ['households', 'holidays', 'TEXT'],                               // 'US' | 'none' | null (automatic from time zone)
 ];
 

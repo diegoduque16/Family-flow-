@@ -216,3 +216,34 @@ test('labels: how people show up (Mom, Dad) is used by alerts, the assistant and
   const cleared = await d.c.patch(`/api/members/${me.id}`, { version: upd.data.member.version, label: null });
   assert.equal(cleared.data.member.label, null);
 });
+
+test('group links: several people can join with one link and land in that group', async () => {
+  const f = await family();
+  const link = await f.dad.c.post('/api/invites', { groupId: f.extended.id });
+  assert.equal(link.status, 201, JSON.stringify(link.data));
+  assert.equal(link.data.groupName, 'Extended');
+  const info = await client(f.env).get(`/api/invites/${link.data.token}`);
+  assert.equal(info.data.groupName, 'Extended');
+  const cousin = await signedUp(f.env, { name: 'Camila Rojas', label: 'Cousin Cami', inviteToken: link.data.token });
+  const uncle = await signedUp(f.env, { name: 'Jorge Rojas', inviteToken: link.data.token });
+  const s = (await f.mom.c.get('/api/sync')).data;
+  const ext = s.groups.find((g) => g.id === f.extended.id);
+  assert.ok(ext.memberIds.includes(cousin.me.memberId));
+  assert.ok(ext.memberIds.includes(uncle.me.memberId));
+  // the new people see Extended events but not Nuclear ones
+  const ev1 = (await f.mom.c.post('/api/events', { title: 'Christmas dinner', start: '2026-12-25T18:00', groupId: f.extended.id })).data.event;
+  const ev2 = (await f.mom.c.post('/api/events', { title: 'School play', start: '2026-12-11T18:00', groupId: f.nuclear.id })).data.event;
+  const cs = (await cousin.c.get('/api/sync')).data;
+  assert.ok(cs.events.find((e) => e.id === ev1.id && !e.deleted));
+  assert.ok(!cs.events.find((e) => e.id === ev2.id && !e.deleted));
+  // someone already in the household who opens the link is added to the group
+  const before = s.groups.find((g) => g.id === f.nuclear.id).memberIds.includes(f.p.gma.id);
+  assert.equal(before, false);
+  const nlink = await f.mom.c.post('/api/invites', { groupId: f.nuclear.id });
+  assert.equal((await f.grandma.c.post(`/api/invites/${nlink.data.token}/accept`)).status, 200);
+  const after = (await f.mom.c.get('/api/sync')).data.groups.find((g) => g.id === f.nuclear.id).memberIds;
+  assert.ok(after.includes(f.p.gma.id));
+  // deleting the group kills its link
+  await f.mom.c.del(`/api/groups/${f.extended.id}`);
+  assert.equal((await client(f.env).get(`/api/invites/${link.data.token}`)).status, 410);
+});

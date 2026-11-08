@@ -1,5 +1,6 @@
 // Sign-up, sign-in, households, family profiles, invitations, data export / deletion.
 import { eventVisible, listVisible } from '../lib/audience.js';
+import { addToGroup } from './groups.js';
 import { HttpError, json, readJson, validate, v, uid, now, randomToken, sha256, EMAIL_RE, COLOR_RE, isValidTimeZone } from '../lib/util.js';
 import { one, all, run, nextSeq, audit, rateLimit } from '../lib/db.js';
 import { hashPassword, verifyPassword, createSession, sessionCookie, clearCookie, requireRole } from '../lib/auth.js';
@@ -245,9 +246,13 @@ export async function deleteMember(req, env, ctx, { id }) {
 // ---------- invitations ----------
 async function findInvite(db, token) {
   const id = await sha256(token);
-  const inv = await one(db, 'SELECT i.*, h.name AS household_name FROM invites i JOIN households h ON h.id = i.household_id WHERE i.id = ?', id);
+  const inv = await one(db, `SELECT i.*, h.name AS household_name, g.name AS group_name, g.deleted_at AS group_deleted FROM invites i
+     JOIN households h ON h.id = i.household_id LEFT JOIN family_groups g ON g.id = i.group_id WHERE i.id = ?`, id);
   if (!inv) throw new HttpError(404, 'invite_invalid', 'This invitation link is not valid.');
-  if (inv.used_at) throw new HttpError(410, 'invite_used', 'This invitation has already been used.');
+  if (inv.group_id && (!inv.group_name || inv.group_deleted)) throw new HttpError(410, 'invite_invalid', 'This group link no longer works because the group was deleted.');
+  if ((inv.max_uses || 1) > 1) {
+    if (inv.uses >= inv.max_uses) throw new HttpError(410, 'invite_used', 'This group link has been used the maximum number of times. Ask for a new one.');
+  } else if (inv.used_at) throw new HttpError(410, 'invite_used', 'This invitation has already been used.');
   if (inv.expires_at < now()) throw new HttpError(410, 'invite_expired', 'This invitation has expired. Ask for a new one.');
   return inv;
 }
@@ -267,18 +272,37 @@ async function acceptInvite(db, inv, userId, { label = null } = {}) {
     await run(db, 'INSERT INTO memberships (household_id, user_id, role, member_id, created_at) VALUES (?,?,?,?,?)',
       inv.household_id, userId, inv.role, inv.member_id, now());
   }
-  await run(db, 'UPDATE invites SET used_at = ?, used_by = ? WHERE id = ? AND used_at IS NULL', now(), userId, inv.id);
+  if (inv.group_id) {
+    // Group link: their profile joins the group (also works for people already in the household).
+    const m = await one(db, 'SELECT member_id FROM memberships WHERE household_id = ? AND user_id = ?', inv.household_id, userId);
+    if (m && m.member_id) await addToGroup(db, inv.household_id, inv.group_id, m.member_id);
+  }
+  if ((inv.max_uses || 1) > 1) await run(db, 'UPDATE invites SET uses = uses + 1, used_at = ?, used_by = ? WHERE id = ? AND uses < max_uses', now(), userId, inv.id);
+  else await run(db, 'UPDATE invites SET used_at = ?, used_by = ? WHERE id = ? AND used_at IS NULL', now(), userId, inv.id);
   await run(db, 'UPDATE users SET current_household_id = ? WHERE id = ?', inv.household_id, userId);
   await audit(db, { householdId: inv.household_id, userId, action: 'invite.accept' });
 }
 
 export async function createInvite(req, env, ctx) {
-  requireRole(ctx, ['owner']);
   const body = validate(v.object({
     role: v.string({ oneOf: ['adult', 'child'] }).default('adult'),
     memberId: v.string({ max: 60 }).optional(),
+    groupId: v.string({ max: 60 }).optional(),
   }), await readJson(req));
+  // Group links can be made by any adult (they manage groups); one-person invitations by owners.
+  requireRole(ctx, body.groupId ? ['owner', 'adult'] : ['owner']);
   const db = env.DB;
+  if (body.groupId) {
+    const g = await one(db, 'SELECT id, name FROM family_groups WHERE id = ? AND household_id = ? AND deleted_at IS NULL', body.groupId, ctx.household.id);
+    if (!g) throw new HttpError(422, 'invalid', 'That group no longer exists.', { field: 'groupId' });
+    await rateLimit(db, `invite:${ctx.household.id}`, 30, 86400);
+    const token = randomToken(24);
+    // Shareable in a group chat: up to 30 people, 14 days.
+    await run(db, 'INSERT INTO invites (id, household_id, role, member_id, created_by, created_at, expires_at, group_id, max_uses, uses) VALUES (?,?,?,?,?,?,?,?,?,0)',
+      await sha256(token), ctx.household.id, 'adult', null, ctx.user.id, now(), now() + 14 * 86400000, g.id, 30);
+    await audit(db, { householdId: ctx.household.id, userId: ctx.user.id, action: 'invite.create', detail: { group: g.id } });
+    return json({ token, url: `${new URL(req.url).origin}/#/join/${token}`, expiresInDays: 14, maxUses: 30, groupName: g.name }, 201);
+  }
   if (body.memberId && !(await one(db, 'SELECT 1 FROM members WHERE id = ? AND household_id = ? AND deleted_at IS NULL', body.memberId, ctx.household.id))) {
     throw new HttpError(422, 'invalid', 'memberId does not belong to this household', { field: 'memberId' });
   }
@@ -294,7 +318,7 @@ export async function createInvite(req, env, ctx) {
 export async function inviteInfo(req, env, ctx, { token }) {
   await rateLimit(env.DB, `inviteinfo:${ip(req)}`, 60, 3600);
   const inv = await findInvite(env.DB, token);
-  return json({ householdName: inv.household_name, role: inv.role });
+  return json({ householdName: inv.household_name, role: inv.role, groupName: inv.group_id ? inv.group_name : null });
 }
 
 export async function joinWithInvite(req, env, ctx, { token }) {
