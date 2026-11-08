@@ -2,7 +2,7 @@
 import { h, icon, toast, sheet, closeAllSheets } from './ui.js';
 import { api, state, on, sync, loadCached, startAutoSync, refreshCounts, clearLocalData, resetState } from './store.js';
 import { TodayView, CalendarView, InboxView, AssistantView, assistantDraft } from './views.js';
-import { MoreView, TasksView, FamilyView, PeopleView, PlacesView, SyncView, NotificationsView, HouseholdView, DataView, DiagnosticsView, AccountView } from './more.js';
+import { MoreView, TasksView, FamilyView, GroupsView, PeopleView, PlacesView, SyncView, NotificationsView, HouseholdView, DataView, DiagnosticsView, AccountView } from './more.js';
 import { openEventEditor, openTaskEditor, openEventDetail, errorText } from './editors.js';
 
 const app = document.getElementById('app');
@@ -14,7 +14,7 @@ const TABS = [
   { id: 'more', label: 'More', icon: 'more' },
 ];
 const SUB = {
-  tasks: ['Tasks & lists', TasksView], family: ['Family', FamilyView], people: ['People', PeopleView], places: ['Places', PlacesView],
+  tasks: ['Tasks & lists', TasksView], family: ['Family', FamilyView], groups: ['Family groups', GroupsView], people: ['People', PeopleView], places: ['Places', PlacesView],
   sync: ['Connected calendars', SyncView], notifications: ['Notifications', NotificationsView], household: ['Household', HouseholdView],
   data: ['Your data', DataView], diagnostics: ['Diagnostics', DiagnosticsView], account: ['Account', AccountView],
 };
@@ -242,7 +242,7 @@ export async function boot() {
 function emitSignedIn() { import('./store.js').then((m) => m.emit('signed-in')); }
 
 let pendingRender = false;
-const LIVE = new Set(['today', 'calendar', 'more/tasks', 'more/family', 'more/null', 'inbox']);
+const LIVE = new Set(['today', 'calendar', 'more/tasks', 'more/family', 'more/groups', 'more/null', 'inbox']);
 function isBusy() {
   if (document.querySelector('.sheet')) return true;
   const ae = document.activeElement;

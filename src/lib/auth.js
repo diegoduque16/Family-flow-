@@ -1,6 +1,7 @@
 // Password hashing, sessions, request authentication and CSRF protection.
 import { HttpError, b64url, b64urlDecode, randomToken, sha256, now } from './util.js';
 import { one, run } from './db.js';
+import { loadMyGroups } from './audience.js';
 
 const PBKDF2_ITER = 100_000; // Workers' maximum for PBKDF2
 const SESSION_DAYS = 60;
@@ -88,7 +89,8 @@ export async function loadContext(request, db) {
     if (m) await run(db, 'UPDATE users SET current_household_id = ? WHERE id = ?', m.household_id, s.user.id);
   }
   const household = m ? await one(db, 'SELECT id, name, timezone, seq FROM households WHERE id = ?', m.household_id) : null;
-  return { ...s, household, role: m ? m.role : null, memberId: m ? m.member_id : null };
+  const groupIds = household ? await loadMyGroups(db, household.id, m.member_id) : new Set();
+  return { ...s, household, role: m ? m.role : null, memberId: m ? m.member_id : null, groupIds };
 }
 
 export const canEdit = (ctx) => ctx.role === 'owner' || ctx.role === 'adult';

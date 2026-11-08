@@ -68,6 +68,7 @@ export const state = {
   events: new Map(),
   lists: new Map(),
   tasks: new Map(),
+  groups: new Map(),
   outbox: [],
   online: navigator.onLine,
   syncing: false,
@@ -94,6 +95,7 @@ async function persist() {
     seq: state.seq, household: state.household, lastSyncAt: state.lastSyncAt,
     members: [...state.members.values()], events: [...state.events.values()].filter((e) => !e._pending),
     lists: [...state.lists.values()], tasks: [...state.tasks.values()].filter((t) => !t._pending),
+    groups: [...state.groups.values()],
   });
   await kvSet(outboxKey(), state.outbox);
 }
@@ -107,13 +109,14 @@ export async function loadCached() {
     state.events = new Map(snap.events.map((x) => [x.id, x]));
     state.lists = new Map(snap.lists.map((x) => [x.id, x]));
     state.tasks = new Map(snap.tasks.map((x) => [x.id, x]));
+    state.groups = new Map((snap.groups || []).map((x) => [x.id, x]));
   }
   for (const op of state.outbox) if (op.optimistic) applyOptimistic(op.optimistic);
   return !!snap;
 }
 
 export function resetState() {
-  state.seq = 0; state.members = new Map(); state.events = new Map(); state.lists = new Map(); state.tasks = new Map(); state.outbox = [];
+  state.seq = 0; state.members = new Map(); state.events = new Map(); state.lists = new Map(); state.tasks = new Map(); state.groups = new Map(); state.outbox = [];
   state.household = null; state.lastSyncAt = 0;
 }
 export async function clearLocalData() { resetState(); await kvClear(); }
@@ -126,12 +129,13 @@ export function sync({ full = false } = {}) {
     try {
       await flushOutbox();
       const data = await api('GET', `/api/sync?since=${full ? 0 : state.seq}`);
-      if (data.full) { state.members = new Map(); state.events = new Map(); state.lists = new Map(); state.tasks = new Map(); }
+      if (data.full) { state.members = new Map(); state.events = new Map(); state.lists = new Map(); state.tasks = new Map(); state.groups = new Map(); }
       state.household = data.household;
       applyRows(state.members, data.members);
       applyRows(state.events, data.events);
       applyRows(state.lists, data.lists);
       applyRows(state.tasks, data.tasks);
+      applyRows(state.groups, data.groups || []);
       for (const op of state.outbox) if (op.optimistic) applyOptimistic(op.optimistic);
       state.seq = data.seq;
       state.lastSyncAt = Date.now();
@@ -171,7 +175,7 @@ function applyOptimistic(o) {
 export async function mutate({ method, path, body, kind, optimistic, offlineOk = true }) {
   try {
     const res = await api(method, path, body);
-    const row = res.event || res.task || res.member || res.list || res.series;
+    const row = res.event || res.task || res.member || res.list || res.group || res.series;
     for (const r of [row, res.event && res.series ? res.series : null]) {
       if (!r || !kind) continue;
       if (r.deleted) state[kind].delete(r.id); else state[kind].set(r.id, r);
@@ -216,6 +220,10 @@ export const nowLocal = () => utcToLocal(Date.now(), tz(), true);
 export const membersList = () => [...state.members.values()].sort((a, b) => a.sort - b.sort);
 export const listsList = () => [...state.lists.values()].sort((a, b) => a.sort - b.sort);
 export const member = (id) => state.members.get(id);
+export const groupsList = () => [...state.groups.values()].sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name));
+// Groups the signed-in person belongs to (through their family profile).
+export const myGroups = () => groupsList().filter((g) => state.me && state.me.memberId && g.memberIds.includes(state.me.memberId));
+export const groupName = (id) => (state.groups.get(id) || {}).name || null;
 
 const toRow = (e) => ({
   start_local: e.start, end_local: e.end, start_utc: e.startUtc, end_utc: e.endUtc, tz: e.tz, rrule: e.rrule, exdates: e.exdates || [], all_day: e.allDay,
@@ -248,7 +256,7 @@ export function localEventRow(id, input, base = {}) {
   const row = {
     ...base, id, title: input.title, notes: input.notes || '', location: input.location || null, allDay: !!input.allDay,
     start: input.start, end, tz: z, startUtc, endUtc: localToUtc(end, z), rrule: input.rrule || null, exdates: base.exdates || [],
-    assignees: input.assignees || [], visibility: input.visibility || 'shared', reminders: input.reminders || [], version: base.version || 1,
+    assignees: input.assignees || [], visibility: input.visibility || 'shared', groupId: input.groupId || null, icon: input.icon || null, reminders: input.reminders || [], version: base.version || 1,
   };
   row.seriesEndUtc = row.rrule ? seriesEndUtc({ ...toRow(row) }) : row.endUtc;
   return row;

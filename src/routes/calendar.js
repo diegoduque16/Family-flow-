@@ -3,7 +3,11 @@ import { HttpError, json, readJson, validate, v, uid, now, parseJsonCol, DATE_RE
 import { one, all, run, nextSeq, audit } from '../lib/db.js';
 import { canEdit, requireRole } from '../lib/auth.js';
 import { localToUtc, parseRrule, buildRrule, seriesEndUtc, expandEvent, parseLocal, addDays, fmtLocal, utcToLocal } from '../lib/time.js';
-import { scheduleEvent, scheduleTask } from '../lib/reminders.js';
+import { scheduleEvent, scheduleTask, humanWhen } from '../lib/reminders.js';
+import { eventVisible, listVisible, eventAudience, audienceUserIds } from '../lib/audience.js';
+import { notifyActivity, actorName, eventWhen } from '../lib/activity.js';
+import { checkGroup, groupOut } from './groups.js';
+import { eventIcon } from '../../public/js/icons.js';
 import { memberOut } from './account.js';
 import { rememberPlace } from './places.js';
 
@@ -15,12 +19,12 @@ export function eventOut(r) {
     allDay: !!r.all_day, start: r.start_local, end: r.end_local, tz: r.tz,
     startUtc: r.start_utc, endUtc: r.end_utc,
     rrule: r.rrule, seriesEndUtc: r.series_end_utc, exdates: parseJsonCol(r.exdates, []),
-    assignees: parseJsonCol(r.assignees, []), visibility: r.visibility, reminders: parseJsonCol(r.reminders, []),
+    assignees: parseJsonCol(r.assignees, []), visibility: r.visibility, groupId: r.group_id || null, icon: r.icon || null, reminders: parseJsonCol(r.reminders, []),
     ownerUserId: r.owner_user_id, sourceId: r.source_id || null, readOnly: !!r.source_id, version: r.version, seq: r.seq, updatedAt: r.updated_at, deleted: !!r.deleted_at,
   };
 }
 export function listOut(r) {
-  return { id: r.id, name: r.name, kind: r.kind, sort: r.sort, version: r.version, seq: r.seq, deleted: !!r.deleted_at };
+  return { id: r.id, name: r.name, kind: r.kind, groupId: r.group_id || null, sort: r.sort, version: r.version, seq: r.seq, deleted: !!r.deleted_at };
 }
 export function taskOut(r) {
   return {
@@ -30,7 +34,9 @@ export function taskOut(r) {
   };
 }
 
-const visible = (r, ctx) => r.visibility !== 'private' || r.owner_user_id === ctx.user.id;
+const visible = (r, ctx) => eventVisible(r, ctx);
+// Emoji/short symbol for the activity (e.g. ⚽). Plain text only.
+const cleanIcon = (x) => { const t = String(x || '').trim(); return t && t.length <= 16 && !/[<>&"'\\]/.test(t) ? t : null; };
 
 // ---------- event validation ----------
 const locationSchema = v.object({
@@ -51,6 +57,8 @@ const eventFields = {
   rrule: v.string({ max: 200 }).nullable(),
   assignees: v.array(v.string({ max: 60 }), { max: 20 }).default([]),
   visibility: v.string({ oneOf: ['shared', 'private'] }).default('shared'),
+  groupId: v.string({ max: 60 }).nullable(),
+  icon: v.string({ max: 16 }).nullable(),
   reminders: v.array(v.number({ int: true, min: 0, max: 60 * 24 * 28 }), { max: 5 }).default([]),
 };
 export const eventSchema = v.object(eventFields);
@@ -89,6 +97,8 @@ export async function normalizeEvent(db, ctx, e) {
     reminders: JSON.stringify([...new Set(e.reminders)].sort((a, b) => a - b)),
   };
   row.series_end_utc = rrule ? seriesEndUtc({ ...row, exdates: '[]' }) : endUtc;
+  row.group_id = e.visibility === 'private' ? null : await checkGroup(db, ctx, e.groupId);
+  row.icon = cleanIcon(e.icon);
   return row;
 }
 
@@ -115,7 +125,7 @@ async function findConflicts(db, ctx, row, excludeId) {
   return out;
 }
 
-export async function createEventCore(db, ctx, input) {
+export async function createEventCore(db, ctx, input, { notify = true } = {}) {
   if (!canEdit(ctx) && input.visibility !== 'private') requireRole(ctx, ['owner', 'adult']);
   const row = await normalizeEvent(db, ctx, input);
   const id = uid('ev_');
@@ -123,18 +133,32 @@ export async function createEventCore(db, ctx, input) {
   const seq = await nextSeq(db, ctx.household.id);
   await run(db,
     `INSERT INTO events (id, household_id, title, notes, location_name, location_address, lat, lon, all_day, start_local, end_local, tz,
-       start_utc, end_utc, rrule, series_end_utc, exdates, assignees, visibility, reminders, owner_user_id, version, seq, created_at, updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'[]',?,?,?,?,1,?,?,?)`,
+       start_utc, end_utc, rrule, series_end_utc, exdates, assignees, visibility, reminders, owner_user_id, version, seq, created_at, updated_at, group_id, icon)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'[]',?,?,?,?,1,?,?,?,?,?)`,
     id, ctx.household.id, row.title, row.notes, row.location_name, row.location_address, row.lat, row.lon, row.all_day, row.start_local,
     row.end_local, row.tz, row.start_utc, row.end_utc, row.rrule, row.series_end_utc, row.assignees, row.visibility, row.reminders,
-    ctx.user.id, seq, t, t);
+    ctx.user.id, seq, t, t, row.group_id, row.icon);
   const saved = await one(db, 'SELECT * FROM events WHERE id = ?', id);
   await scheduleEvent(db, saved);
   if (row.location_address) await rememberPlace(db, ctx.household.id, { name: row.location_name, address: row.location_address, lat: row.lat, lon: row.lon });
   await audit(db, { householdId: ctx.household.id, userId: ctx.user.id, action: 'event.create', refType: 'event', refId: id });
   const conflicts = await findConflicts(db, ctx, saved, id);
+  if (notify) await announceEvent(db, ctx, saved, 'added');
   return { event: eventOut(saved), conflicts };
 }
+
+// Family-activity alert for an event (never for private ones).
+async function announceEvent(db, ctx, ev, what, detail = null) {
+  if (!ev || ev.visibility === 'private') return;
+  const who = await actorName(db, ctx);
+  const verb = { added: 'added', changed: 'changed', cancelled: 'cancelled' }[what];
+  const ic = eventIcon({ icon: ev.icon, title: ev.title });
+  const label = ic ? `${ic} ${ev.title}` : ev.title;
+  await notifyActivity(ctx, {
+    userIds: await eventAudience(db, ev), title: `${who} ${verb} “${label}”`, body: detail || eventWhen(ev), refType: 'event', refId: ev.id,
+  });
+}
+const meaningfulChange = (a, b) => ['title', 'start_utc', 'end_utc', 'all_day', 'rrule', 'location_name', 'location_address', 'group_id'].some((k) => (a[k] ?? null) !== (b[k] ?? null));
 
 // ---------- routes: events ----------
 export async function createEvent(req, env, ctx) {
@@ -184,6 +208,7 @@ export async function updateEvent(req, env, ctx, { id }) {
     allDay: patch.allDay ?? base.allDay, start: patch.start ?? base.start, end: patch.end ?? (patch.start || patch.allDay !== undefined ? undefined : base.end),
     tz: patch.tz ?? base.tz, rrule: 'rrule' in body ? patch.rrule ?? null : base.rrule,
     assignees: patch.assignees ?? base.assignees, visibility: patch.visibility ?? base.visibility, reminders: patch.reminders ?? base.reminders,
+    groupId: 'groupId' in body ? patch.groupId ?? null : base.groupId, icon: 'icon' in body ? patch.icon ?? null : base.icon,
   };
   if (patch.start && !patch.end && !('allDay' in body && patch.allDay !== base.allDay)) {
     // keep the original duration when only the start moves
@@ -200,15 +225,16 @@ export async function updateEvent(req, env, ctx, { id }) {
     const exdates = row.rrule && row.start_local === cur.start_local ? cur.exdates : '[]';
     await run(db,
       `UPDATE events SET title=?, notes=?, location_name=?, location_address=?, lat=?, lon=?, all_day=?, start_local=?, end_local=?, tz=?,
-         start_utc=?, end_utc=?, rrule=?, series_end_utc=?, exdates=?, assignees=?, visibility=?, reminders=?, version=version+1, seq=?, updated_at=?
+         start_utc=?, end_utc=?, rrule=?, series_end_utc=?, exdates=?, assignees=?, visibility=?, reminders=?, group_id=?, icon=?, version=version+1, seq=?, updated_at=?
        WHERE id = ? AND version = ?`,
       row.title, row.notes, row.location_name, row.location_address, row.lat, row.lon, row.all_day, row.start_local, row.end_local, row.tz,
-      row.start_utc, row.end_utc, row.rrule, row.series_end_utc, exdates, row.assignees, row.visibility, row.reminders, seq, t, id, cur.version);
+      row.start_utc, row.end_utc, row.rrule, row.series_end_utc, exdates, row.assignees, row.visibility, row.reminders, row.group_id, row.icon, seq, t, id, cur.version);
     const saved = await one(db, 'SELECT * FROM events WHERE id = ?', id);
     if (saved.version !== cur.version + 1) throw new HttpError(409, 'conflict', 'This event was changed by someone else at the same moment.', { current: eventOut(saved) });
     await scheduleEvent(db, saved);
     if (row.location_address) await rememberPlace(db, ctx.household.id, { name: row.location_name, address: row.location_address, lat: row.lat, lon: row.lon });
     await audit(db, { householdId: ctx.household.id, userId: ctx.user.id, action: 'event.update', refType: 'event', refId: id });
+    if (saved.visibility === 'shared' && (cur.visibility === 'private' || meaningfulChange(cur, saved))) await announceEvent(db, ctx, saved, cur.visibility === 'private' ? 'added' : 'changed');
     return json({ event: eventOut(saved), conflicts: await findConflicts(db, ctx, saved, id) });
   }
 
@@ -224,8 +250,9 @@ export async function updateEvent(req, env, ctx, { id }) {
     await run(db, 'UPDATE events SET exdates = ?, version = version + 1, seq = ?, updated_at = ? WHERE id = ?', JSON.stringify(ex), seq, t, id);
     const single = { ...merged, rrule: null };
     if (!patch.start) { single.start = occ.start_local; single.end = patch.end ?? occ.end_local; }
-    const created = await createEventCore(db, ctx, single);
+    const created = await createEventCore(db, ctx, single, { notify: false });
     await scheduleEvent(db, await one(db, 'SELECT * FROM events WHERE id = ?', id));
+    await announceEvent(db, ctx, await one(db, 'SELECT * FROM events WHERE id = ?', created.event.id), 'changed');
     return json({ event: created.event, series: eventOut(await one(db, 'SELECT * FROM events WHERE id = ?', id)), conflicts: created.conflicts });
   }
   // following: end the old series the day before, start a new series at this occurrence
@@ -243,8 +270,12 @@ export async function updateEvent(req, env, ctx, { id }) {
     oldRow.rrule, seriesEndUtc(oldRow), seq, t, id);
   const next = { ...merged, rrule: newRuleStr };
   if (!patch.start) { next.start = occ.start_local; next.end = patch.end ?? occ.end_local; }
-  const created = await createEventCore(db, ctx, next);
+  const created = await createEventCore(db, ctx, next, { notify: false });
   await scheduleEvent(db, await one(db, 'SELECT * FROM events WHERE id = ?', id));
+  {
+    const nev = await one(db, 'SELECT * FROM events WHERE id = ?', created.event.id);
+    await announceEvent(db, ctx, nev, 'changed', `From ${humanWhen(nev.start_utc, nev.tz, true)} on · ${eventWhen(nev)}`);
+  }
   return json({ event: created.event, series: eventOut(await one(db, 'SELECT * FROM events WHERE id = ?', id)), conflicts: created.conflicts });
 }
 
@@ -274,6 +305,13 @@ export async function deleteEvent(req, env, ctx, { id }) {
   const saved = await one(db, 'SELECT * FROM events WHERE id = ?', id);
   await scheduleEvent(db, saved);
   await audit(db, { householdId: ctx.household.id, userId: ctx.user.id, action: 'event.delete', refType: 'event', refId: id, detail: { scope } });
+  if (cur.visibility === 'shared') {
+    let detail = null;
+    if (cur.rrule && scope === 'this' && occurrence) detail = `Only on ${humanWhen(localToUtc(occurrence, cur.tz), cur.tz, occurrence.length <= 10)}`;
+    else if (cur.rrule && scope === 'following' && occurrence) detail = `From ${humanWhen(localToUtc(occurrence, cur.tz), cur.tz, true)} on`;
+    else if (cur.rrule) detail = 'All dates';
+    await announceEvent(db, ctx, cur, 'cancelled', detail);
+  }
   return json({ ok: true, event: eventOut(saved) });
 }
 
@@ -316,7 +354,17 @@ export async function checkConflicts(req, env, ctx) {
 }
 
 // ---------- lists & tasks ----------
-const listSchema = v.object({ name: v.string({ min: 1, max: 60 }), kind: v.string({ oneOf: ['todo', 'shopping'] }).default('todo') });
+const listSchema = v.object({ name: v.string({ min: 1, max: 60 }), kind: v.string({ oneOf: ['todo', 'shopping'] }).default('todo'), groupId: v.string({ max: 60 }).nullable() });
+
+async function listGroup(db, ctx, groupId) {
+  const g = await checkGroup(db, ctx, groupId);
+  if (g && !(ctx.groupIds && ctx.groupIds.has(g))) throw new HttpError(422, 'invalid', 'You can only limit a list to a group you are in.', { field: 'groupId' });
+  return g;
+}
+async function loadVisibleList(db, ctx, id) {
+  const l = await one(db, 'SELECT * FROM lists WHERE id = ? AND household_id = ? AND deleted_at IS NULL', id, ctx.household.id);
+  return l && listVisible(l, ctx) ? l : null;
+}
 
 export async function createList(req, env, ctx) {
   requireRole(ctx, ['owner', 'adult']);
@@ -326,27 +374,34 @@ export async function createList(req, env, ctx) {
   const id = uid('l_');
   const n = await one(db, 'SELECT COUNT(*) AS n FROM lists WHERE household_id = ? AND deleted_at IS NULL', ctx.household.id);
   if (n.n >= 50) throw new HttpError(422, 'limit', 'You can have up to 50 lists.');
-  await run(db, 'INSERT INTO lists (id, household_id, name, kind, sort, version, seq, created_at, updated_at) VALUES (?,?,?,?,?,1,?,?,?)',
-    id, ctx.household.id, body.name, body.kind, n.n, seq, now(), now());
+  const groupId = await listGroup(db, ctx, body.groupId);
+  await run(db, 'INSERT INTO lists (id, household_id, name, kind, sort, version, seq, created_at, updated_at, group_id) VALUES (?,?,?,?,?,1,?,?,?,?)',
+    id, ctx.household.id, body.name, body.kind, n.n, seq, now(), now(), groupId);
   return json({ list: listOut(await one(db, 'SELECT * FROM lists WHERE id = ?', id)) }, 201);
 }
 
 export async function updateList(req, env, ctx, { id }) {
   requireRole(ctx, ['owner', 'adult']);
-  const body = validate(v.object({ name: v.string({ min: 1, max: 60 }).optional(), sort: v.number({ int: true, min: 0, max: 999 }).optional(), version: v.number({ int: true, min: 1 }) }), await readJson(req));
+  const raw = await readJson(req);
+  const body = validate(v.object({ name: v.string({ min: 1, max: 60 }).optional(), sort: v.number({ int: true, min: 0, max: 999 }).optional(), groupId: v.string({ max: 60 }).nullable(), version: v.number({ int: true, min: 1 }) }), raw);
   const db = env.DB;
-  const cur = await one(db, 'SELECT * FROM lists WHERE id = ? AND household_id = ? AND deleted_at IS NULL', id, ctx.household.id);
+  const cur = await loadVisibleList(db, ctx, id);
   if (!cur) throw new HttpError(404, 'not_found', 'List not found.');
   if (cur.version !== body.version) throw new HttpError(409, 'conflict', 'This list was changed by someone else.', { current: listOut(cur) });
+  const groupId = 'groupId' in raw ? await listGroup(db, ctx, body.groupId) : cur.group_id;
   const seq = await nextSeq(db, ctx.household.id);
-  await run(db, 'UPDATE lists SET name = ?, sort = ?, version = version + 1, seq = ?, updated_at = ? WHERE id = ?', body.name ?? cur.name, body.sort ?? cur.sort, seq, now(), id);
+  await run(db, 'UPDATE lists SET name = ?, sort = ?, group_id = ?, version = version + 1, seq = ?, updated_at = ? WHERE id = ?', body.name ?? cur.name, body.sort ?? cur.sort, groupId, seq, now(), id);
+  if ((groupId || null) !== (cur.group_id || null)) {
+    // tasks in the list must re-sync so people who lost or gained access are updated
+    for (const tk of await all(db, 'SELECT id FROM tasks WHERE list_id = ?', id)) await run(db, 'UPDATE tasks SET seq = ? WHERE id = ?', await nextSeq(db, ctx.household.id), tk.id);
+  }
   return json({ list: listOut(await one(db, 'SELECT * FROM lists WHERE id = ?', id)) });
 }
 
 export async function deleteList(req, env, ctx, { id }) {
   requireRole(ctx, ['owner', 'adult']);
   const db = env.DB;
-  const cur = await one(db, 'SELECT * FROM lists WHERE id = ? AND household_id = ? AND deleted_at IS NULL', id, ctx.household.id);
+  const cur = await loadVisibleList(db, ctx, id);
   if (!cur) throw new HttpError(404, 'not_found', 'List not found.');
   const n = await one(db, 'SELECT COUNT(*) AS n FROM lists WHERE household_id = ? AND deleted_at IS NULL', ctx.household.id);
   if (n.n <= 1) throw new HttpError(422, 'last_list', 'Keep at least one list.');
@@ -375,7 +430,7 @@ const taskFields = {
 export const taskSchema = v.object(taskFields);
 
 async function normalizeTask(db, ctx, t) {
-  if (!(await one(db, 'SELECT 1 FROM lists WHERE id = ? AND household_id = ? AND deleted_at IS NULL', t.listId, ctx.household.id))) {
+  if (!(await loadVisibleList(db, ctx, t.listId))) {
     throw new HttpError(422, 'invalid', 'listId is not a list in this household', { field: 'listId' });
   }
   if (t.assignee && !(await one(db, 'SELECT 1 FROM members WHERE id = ? AND household_id = ? AND deleted_at IS NULL', t.assignee, ctx.household.id))) {
@@ -403,7 +458,20 @@ export async function createTaskCore(db, ctx, t) {
   const saved = await one(db, 'SELECT * FROM tasks WHERE id = ?', id);
   await scheduleTask(db, saved, ctx.household.timezone);
   await audit(db, { householdId: ctx.household.id, userId: ctx.user.id, action: 'task.create', refType: 'task', refId: id });
+  if (saved.assignee) await announceAssigned(db, ctx, saved);
   return { task: taskOut(saved) };
+}
+
+// Tell the person a task was assigned to (if they have a login and can see the list).
+async function announceAssigned(db, ctx, task) {
+  const list = await one(db, 'SELECT name, group_id FROM lists WHERE id = ?', task.list_id);
+  const logins = (await all(db, 'SELECT user_id FROM memberships WHERE household_id = ? AND member_id = ?', ctx.household.id, task.assignee)).map((r) => r.user_id);
+  if (!logins.length) return;
+  const allowed = list && list.group_id ? new Set(await audienceUserIds(db, ctx.household.id, { groupId: list.group_id })) : null;
+  const userIds = logins.filter((u) => !allowed || allowed.has(u));
+  const who = await actorName(db, ctx);
+  const due = task.due_local ? `Due ${humanWhen(task.due_utc, ctx.household.timezone, task.due_local.length <= 10)}` : null;
+  await notifyActivity(ctx, { userIds, title: `${who} assigned you “${task.title}”`, body: [due, list && list.name].filter(Boolean).join(' · '), refType: 'task', refId: task.id });
 }
 
 export async function createTask(req, env, ctx) {
@@ -437,7 +505,7 @@ export async function updateTask(req, env, ctx, { id }) {
     version: v.number({ int: true, min: 1 }),
   }), body);
   const cur = await one(db, 'SELECT * FROM tasks WHERE id = ? AND household_id = ? AND deleted_at IS NULL', id, ctx.household.id);
-  if (!cur) throw new HttpError(404, 'not_found', 'Task not found. It may have been deleted.');
+  if (!cur || !(await loadVisibleList(db, ctx, cur.list_id))) throw new HttpError(404, 'not_found', 'Task not found. It may have been deleted.');
   if (ctx.role === 'child') {
     const onlyDone = Object.keys(body).every((k) => ['done', 'version'].includes(k));
     if (!onlyDone) throw new HttpError(403, 'forbidden', 'You can tick tasks off, but only adults can edit them.');
@@ -465,6 +533,7 @@ export async function updateTask(req, env, ctx, { id }) {
   const saved = await one(db, 'SELECT * FROM tasks WHERE id = ?', id);
   if (saved.version !== cur.version + 1) throw new HttpError(409, 'conflict', 'This task was changed by someone else at the same moment.', { current: taskOut(saved) });
   await scheduleTask(db, saved, ctx.household.timezone);
+  if (saved.assignee && saved.assignee !== cur.assignee) await announceAssigned(db, ctx, saved);
   return json({ task: taskOut(saved) });
 }
 
@@ -472,7 +541,7 @@ export async function deleteTask(req, env, ctx, { id }) {
   requireRole(ctx, ['owner', 'adult']);
   const db = env.DB;
   const cur = await one(db, 'SELECT * FROM tasks WHERE id = ? AND household_id = ? AND deleted_at IS NULL', id, ctx.household.id);
-  if (!cur) throw new HttpError(404, 'not_found', 'Task not found.');
+  if (!cur || !(await loadVisibleList(db, ctx, cur.list_id))) throw new HttpError(404, 'not_found', 'Task not found.');
   const seq = await nextSeq(db, ctx.household.id);
   await run(db, 'UPDATE tasks SET deleted_at = ?, version = version + 1, seq = ? WHERE id = ?', now(), seq, id);
   await run(db, "DELETE FROM scheduled_notifications WHERE ref_type = 'task' AND ref_id = ? AND status = 'pending'", id);
@@ -486,20 +555,25 @@ export async function sync(req, env, ctx) {
   const db = env.DB;
   const hh = ctx.household.id;
   const seq = (await one(db, 'SELECT seq FROM households WHERE id = ?', hh)).seq;
-  const [members, events, lists, tasks] = await Promise.all([
+  const [members, events, lists, tasks, groups, allLists] = await Promise.all([
     all(db, 'SELECT * FROM members WHERE household_id = ? AND seq > ?', hh, since),
     all(db, 'SELECT * FROM events WHERE household_id = ? AND seq > ?', hh, since),
     all(db, 'SELECT * FROM lists WHERE household_id = ? AND seq > ?', hh, since),
     all(db, 'SELECT * FROM tasks WHERE household_id = ? AND seq > ?', hh, since),
+    all(db, 'SELECT * FROM family_groups WHERE household_id = ? AND seq > ?', hh, since),
+    all(db, 'SELECT id, group_id FROM lists WHERE household_id = ?', hh),
   ]);
+  const hiddenLists = new Set(allLists.filter((l) => !listVisible(l, ctx)).map((l) => l.id));
+  const gone = (r) => ({ id: r.id, deleted: true, seq: r.seq });
   return json({
     seq,
     full: since === 0,
     household: { id: hh, name: ctx.household.name, timezone: ctx.household.timezone },
     members: members.map(memberOut),
     events: events.map((r) => (visible(r, ctx) ? eventOut(r) : { id: r.id, deleted: true, seq: r.seq })),
-    lists: lists.map(listOut),
-    tasks: tasks.map(taskOut),
+    lists: lists.map((r) => (hiddenLists.has(r.id) ? gone(r) : listOut(r))),
+    tasks: tasks.map((r) => (hiddenLists.has(r.list_id) ? gone(r) : taskOut(r))),
+    groups: groups.map(groupOut),
   });
 }
 
@@ -522,7 +596,7 @@ export async function icsFeed(req, env, ctx, { token }) {
   const hh = await one(db, 'SELECT * FROM households WHERE ics_token = ?', token.replace(/\.ics$/, ''));
   if (!hh) return new Response('Not found', { status: 404 });
   const members = Object.fromEntries((await all(db, 'SELECT id, name FROM members WHERE household_id = ?', hh.id)).map((m) => [m.id, m.name]));
-  const rows = await all(db, "SELECT * FROM events WHERE household_id = ? AND deleted_at IS NULL AND visibility = 'shared' AND source_id IS NULL AND (series_end_utc IS NULL OR series_end_utc > ?)", hh.id, now() - 180 * 86400000);
+  const rows = await all(db, "SELECT * FROM events WHERE household_id = ? AND deleted_at IS NULL AND visibility = 'shared' AND group_id IS NULL AND source_id IS NULL AND (series_end_utc IS NULL OR series_end_utc > ?)", hh.id, now() - 180 * 86400000);
   const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Family Flow//EN', 'CALSCALE:GREGORIAN', `X-WR-CALNAME:${icsEscape(hh.name)} (Family Flow)`, `X-WR-TIMEZONE:${hh.timezone}`];
   for (const r of rows) {
     const who = parseJsonCol(r.assignees, []).map((a) => members[a]).filter(Boolean);

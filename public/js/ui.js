@@ -184,6 +184,16 @@ export function addDaysStr(date, n) {
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
 }
+// Profile picture: photo, emoji avatar, or initials on the profile colour.
+export function avatarEl(m, { size = 34 } = {}) {
+  const a = m && m.avatar;
+  const style = size !== 34 ? { width: `${size}px`, height: `${size}px`, fontSize: `${Math.round(size * 0.42)}px` } : null;
+  const el = h('span', { class: 'avatar', '--c': m ? m.color : 'var(--ink-3)', style, 'aria-hidden': 'true' });
+  if (a && a.startsWith('data:image/')) { el.classList.add('photo'); el.append(h('img', { src: a, alt: '' })); }
+  else if (a) { el.classList.add('emoji'); el.textContent = a; }
+  else el.textContent = initials(m ? m.name : '?');
+  return el;
+}
 export const initials = (name) => (name || '?').split(/\s+/).filter(Boolean).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 export function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
 export async function copyText(text) {

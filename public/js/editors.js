@@ -1,6 +1,7 @@
 // Event + task editors, event details, and the address autocomplete field.
-import { h, icon, sheet, toast, choose, confirmDialog, fmtDay, fmtRange, fmtTime, reminderLabel, debounce, addDaysStr } from './ui.js';
-import { api, state, mutate, membersList, listsList, member, tz, todayStr, nowLocal, localEventRow } from './store.js';
+import { h, icon, sheet, toast, choose, confirmDialog, fmtDay, fmtRange, fmtTime, reminderLabel, debounce, addDaysStr, avatarEl } from './ui.js';
+import { suggestIcon, eventIcon, ICON_CHOICES } from './icons.js';
+import { api, state, mutate, membersList, listsList, member, tz, todayStr, nowLocal, localEventRow, groupsList, groupName } from './store.js';
 import { parseRrule, buildRrule } from './time.js';
 
 const DOW = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
@@ -116,7 +117,7 @@ function memberPicker(selected, { single = false } = {}) {
     wrap.replaceChildren(...membersList().map((m) => h('button', {
       type: 'button', class: 'chip', '--c': m.color, 'aria-pressed': String(set.has(m.id)),
       onclick: () => { if (set.has(m.id)) set.delete(m.id); else { if (single) set.clear(); set.add(m.id); } render(); },
-    }, h('span', { class: 'dot', '--c': m.color }), m.name)));
+    }, m.avatar ? avatarEl(m, { size: 22 }) : h('span', { class: 'dot', '--c': m.color }), m.name)));
   };
   render();
   return { el: wrap, get value() { return [...set]; } };
@@ -198,7 +199,46 @@ export function openEventEditor(opts = {}) {
     type: 'button', class: 'chip', 'aria-pressed': String(rem.has(m)), onclick: () => { if (rem.has(m)) rem.delete(m); else if (rem.size < 5) rem.add(m); renderRem(); },
   }, reminderLabel(m))));
   renderRem();
-  const priv = h('input', { type: 'checkbox', checked: src.visibility === 'private' });
+  // Who sees it: the whole family, one family group, or only me.
+  const share = h('select', { class: 'input', 'aria-label': 'Share with' },
+    h('option', { value: '' }, 'Everyone in the family'),
+    groupsList().map((g) => h('option', { value: g.id }, `${g.name} only`)),
+    h('option', { value: '__private' }, 'Only me (private)'));
+  share.value = src.visibility === 'private' ? '__private' : (src.groupId && state.groups.has(src.groupId) ? src.groupId : '');
+  const shareHint = h('p', { class: 'hint' });
+  const renderShare = () => {
+    const g = state.groups.get(share.value);
+    shareHint.textContent = share.value === '__private' ? 'Only you can see it. No one else is notified.'
+      : g ? `Only ${g.memberIds.map((id) => (member(id) || {}).name).filter(Boolean).join(', ') || 'this group'} will see it and get updates.`
+      : 'Everyone in the family sees it and gets an update when it’s added or changed.';
+  };
+  share.addEventListener('change', renderShare);
+  renderShare();
+
+  // Activity icon: suggested from the title until you pick one ('-' = no icon).
+  let iconTouched = !!src.icon;
+  let iconChoice = src.icon && src.icon !== '-' ? src.icon : null;
+  const iconPreview = h('span', { style: { fontSize: '28px', minWidth: '36px', textAlign: 'center', lineHeight: 1 }, 'aria-hidden': 'true' });
+  const iconNote = h('span', { class: 'hint grow', style: { margin: 0 } });
+  const iconGrid = h('div', { class: 'icon-grid', hidden: true, role: 'group', 'aria-label': 'Choose an icon', style: { marginTop: '8px' } });
+  const iconToggle = h('button', { type: 'button', class: 'btn ghost sm', 'aria-expanded': 'false' }, 'Change');
+  const currentIcon = () => (iconTouched ? iconChoice : suggestIcon(title.value));
+  function renderIcon() {
+    const cur = currentIcon();
+    const sug = suggestIcon(title.value);
+    iconPreview.textContent = cur || '–';
+    iconNote.textContent = iconTouched ? (cur ? 'Your choice' : 'No icon') : sug ? 'Suggested from the title' : 'No suggestion yet — pick one';
+    iconToggle.textContent = iconGrid.hidden ? (cur ? 'Change' : 'Pick an icon') : 'Done';
+    const opts = [...new Set([sug, ...ICON_CHOICES].filter(Boolean))];
+    iconGrid.replaceChildren(...[
+      h('button', { type: 'button', class: 'chip', style: { width: 'auto', padding: '0 12px', fontSize: '14px' }, 'aria-pressed': String(iconTouched && !iconChoice), onclick: () => { iconTouched = true; iconChoice = null; renderIcon(); } }, 'None'),
+      sug ? h('button', { type: 'button', class: 'chip', style: { width: 'auto', padding: '0 12px', fontSize: '14px' }, 'aria-pressed': String(!iconTouched), onclick: () => { iconTouched = false; iconChoice = null; renderIcon(); } }, 'Auto') : null,
+    ].filter(Boolean),
+      ...opts.map((ic) => h('button', { type: 'button', class: 'chip', 'aria-label': `Icon ${ic}`, 'aria-pressed': String(iconTouched && iconChoice === ic), onclick: () => { iconTouched = true; iconChoice = ic; renderIcon(); } }, ic)));
+  }
+  iconToggle.addEventListener('click', () => { iconGrid.hidden = !iconGrid.hidden; iconToggle.setAttribute('aria-expanded', String(!iconGrid.hidden)); renderIcon(); });
+  title.addEventListener('input', () => { if (!iconTouched) renderIcon(); });
+  renderIcon();
   const notes = h('textarea', { class: 'input', maxlength: 5000, rows: 3, placeholder: 'Anything to remember' });
   notes.value = src.notes || '';
   const formErr = h('div');
@@ -251,7 +291,8 @@ export function openEventEditor(opts = {}) {
     const loc = place.value;
     return {
       title: t, notes: notes.value.trim(), allDay, start: s, end: e, rrule,
-      assignees: who.value, visibility: priv.checked ? 'private' : 'shared', reminders: [...rem].sort((a, b) => a - b),
+      assignees: who.value, visibility: share.value === '__private' ? 'private' : 'shared', groupId: share.value && share.value !== '__private' ? share.value : null,
+      icon: iconTouched ? (iconChoice || '-') : null, reminders: [...rem].sort((a, b) => a - b),
       location: loc && (loc.name || loc.address) ? { name: loc.name || '', address: loc.address || '', ...(loc.lat != null ? { lat: loc.lat, lon: loc.lon } : {}) } : null,
     };
   }
@@ -262,14 +303,15 @@ export function openEventEditor(opts = {}) {
     full: true,
     body: h('form', { onsubmit: (e) => { e.preventDefault(); save(); }, novalidate: true },
       field('Title', h('div', null, title, titleErr)),
+      h('div', { class: 'field' }, h('span', { class: 'label' }, 'Icon'), h('div', { class: 'row', style: { gap: '10px' } }, iconPreview, iconNote, iconToggle), iconGrid),
       h('label', { class: 'switch field' }, h('span', { style: { fontWeight: 650 } }, 'All day'), allDayT),
       h('div', { class: 'field' }, h('span', { class: 'label' }, 'Starts'), h('div', { class: 'two' }, sDate, sTime)),
       h('div', { class: 'field' }, h('span', { class: 'label' }, 'Ends'), h('div', { class: 'two' }, eDate, eTime), timeErr),
       editingOcc ? null : field('Repeats', freqSel), editingOcc ? null : recurDetail,
       h('div', { class: 'field' }, h('span', { class: 'label' }, 'Who'), who.el),
       place.el,
-      h('div', { class: 'field' }, h('span', { class: 'label' }, 'Reminders'), remWrap, h('p', { class: 'hint' }, 'Sent to everyone in the household with notifications on (private events: only you).')),
-      h('label', { class: 'switch field' }, h('span', null, h('span', { style: { fontWeight: 650 } }, 'Private'), h('span', { class: 'hint', style: { display: 'block', margin: 0 } }, 'Only you can see it')), priv),
+      h('div', { class: 'field' }, h('span', { class: 'label' }, 'Share with'), share, shareHint),
+      h('div', { class: 'field' }, h('span', { class: 'label' }, 'Reminders'), remWrap, h('p', { class: 'hint' }, 'Sent to everyone who can see this event and has notifications on.')),
       field('Notes', notes),
       formErr,
       h('button', { type: 'submit', hidden: true })),
@@ -357,14 +399,17 @@ export function openEventDetail(ev, occ) {
   const mine = ev.ownerUserId === state.me.user.id;
   const editable = !ev._pending && !ev.readOnly && (canEdit() || mine);
   const src = ev.sourceId ? state.sources.get(ev.sourceId) : null;
+  const ic = eventIcon(ev);
+  const grp = ev.groupId ? groupName(ev.groupId) : null;
   const s = sheet({
-    title: ev.title,
+    title: ic ? `${ic} ${ev.title}` : ev.title,
     body: h('div', { style: { paddingTop: '6px' } },
       h('p', { style: { fontSize: '17px', fontWeight: 650, margin: '6px 0 2px' } }, fmtDay(o.start)),
       h('p', { class: 'muted', style: { margin: '0 0 12px' } }, fmtRange(o, ev.allDay), ev.tz !== tz() ? ` (${ev.tz})` : ''),
       rr ? h('div', { class: 'row muted small', style: { marginBottom: '8px' } }, icon('repeat'), rr) : null,
       ev.visibility === 'private' ? h('div', { class: 'row muted small', style: { marginBottom: '8px' } }, icon('lock'), 'Private — only you can see this') : null,
-      who.length ? h('div', { class: 'chips', style: { margin: '10px 0' } }, who.map((m) => h('span', { class: 'chip', '--c': m.color, 'aria-pressed': 'true' }, h('span', { class: 'dot', '--c': m.color }), m.name))) : null,
+      grp ? h('div', { class: 'row muted small', style: { marginBottom: '8px' } }, icon('people'), `Shared with ${grp} only`) : null,
+      who.length ? h('div', { class: 'chips', style: { margin: '10px 0' } }, who.map((m) => h('span', { class: 'chip', '--c': m.color, 'aria-pressed': 'true' }, m.avatar ? avatarEl(m, { size: 22 }) : h('span', { class: 'dot', '--c': m.color }), m.name))) : null,
       ev.location ? h('a', { class: 'place-chip', href: mapsUrl(ev.location), target: '_blank', rel: 'noopener', style: { color: 'inherit', textDecoration: 'none' } }, icon('pin'),
         h('div', { class: 'grow' }, ev.location.name ? h('div', { style: { fontWeight: 650 } }, ev.location.name) : null, ev.location.address ? h('div', { class: 'muted small' }, ev.location.address) : null),
         h('span', { class: 'btn ghost sm' }, 'Directions')) : null,
@@ -385,7 +430,7 @@ async function deleteEvent(ev, occ) {
     scope = await choose('Delete recurring event', null, [
       { label: 'Only this event', value: 'this', kind: 'danger' }, { label: 'This and following events', value: 'following', kind: 'danger' }, { label: 'All events', value: 'all', kind: 'danger' }]);
     if (!scope) return false;
-  } else if (!(await confirmDialog('Delete event?', `“${ev.title}” will be removed for everyone.`, 'Delete', true))) return false;
+  } else if (!(await confirmDialog('Delete event?', `“${ev.title}” will be removed for everyone who can see it.`, 'Delete', true))) return false;
   const q = new URLSearchParams({ version: ev.version, scope });
   if (scope !== 'all') q.set('occurrence', occ.start);
   try {

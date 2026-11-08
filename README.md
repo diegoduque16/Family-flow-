@@ -20,6 +20,9 @@ A shared family calendar, task lists and AI assistant. Mobile-first web app (ins
 | Sign in with Google / Microsoft | One tap, read-only (OAuth 2.0 + PKCE). Pick which calendars to show; refreshed every 15 min; refresh tokens stored encrypted with a key derived from the provider's client secret; revoked access shows Reconnect. Needs the app registered once with Google Cloud and Microsoft Entra (secrets above). | `test/oauth.test.js` (simulated Google + Microsoft), e2e (redirect) |
 | Show Family Flow elsewhere | Private subscription link (ICS) for Apple / Google / Outlook, one-way, shared Family Flow events only (imported ones are left out to avoid duplicates). Link can be rotated. | `test/api.test.js` |
 | Backups | Daily gzip of all tables to R2, read back to verify, 35 days kept. D1 also has its own 30-day point-in-time restore. | `test/ops.test.js` restores the backup and checks the data |
+| Family groups | Groups inside a household (e.g. Nuclear / Extended family). Events can be shared with everyone, one group, or only me; lists can be limited to a group you're in. Non-members never receive those items in sync, exports, the assistant, reminders or the shared calendar feed. Deleting a group shares its items with everyone. | `test/groups.test.js` |
+| Family updates | Inbox + push alert to everyone else who can see it when an event is added, moved/renamed/relocated, or cancelled, and to the assignee when a task is assigned. Notes-only edits and private events stay silent. Each person can turn these off (More → Notifications). | `test/groups.test.js` |
+| Icons & avatars | Events show an icon suggested from the title (⚽ soccer, 🦷 dentist, 🎂 birthday…), which you can change or turn off. Profiles can have a photo (cropped and shrunk on the phone, stored ≤ ~100 KB) or an emoji avatar. Shopping-list items have a "Buy on Amazon" link (opens an Amazon search). | `test/groups.test.js`, browser check |
 | Diagnostics | Owner-only page of live checks: database write/read, schema, cron heartbeat, overdue reminders, push, backups, Geoapify, Photon, Claude API key + model, Workers AI. A check is only green if it actually ran and passed. | `test/ops.test.js` |
 
 ## Not done yet (honest list)
@@ -66,7 +69,7 @@ If you change `src/lib/time.js`, copy it to `public/js/time.js` (a test checks t
 src/index.js            routes, security headers, cron entry
 src/lib/                auth, database helpers, time zones + recurrence, reminders, Web Push
 src/routes/             account, calendar+tasks, places, assistant+voice, ops (inbox, push, cron, backups, diagnostics)
-migrations/             D1 schema
+migrations/             D1 schema (src/lib/schema.js also adds new columns/tables itself on first request, so deploys work with or without the migrations step)
 public/                 the app (plain JS modules, no build step), service worker, icons
 test/, e2e/             automated tests
 scripts/dev-server.js   runs the real Worker locally

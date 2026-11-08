@@ -1,6 +1,7 @@
 // "More" area: tasks & lists, family profiles, people & invites, places, calendar sync, notifications, household, data, diagnostics, account.
-import { h, icon, toast, sheet, confirmDialog, copyText, initials } from './ui.js';
-import { api, state, mutate, membersList, listsList, member, sync, clearLocalData, emit } from './store.js';
+import { h, icon, toast, sheet, confirmDialog, copyText, initials, avatarEl } from './ui.js';
+import { AVATAR_CHOICES } from './icons.js';
+import { api, state, mutate, membersList, listsList, member, sync, clearLocalData, emit, groupsList, myGroups, groupName } from './store.js';
 import { openTaskEditor, placeInput, canEdit, errorText, providerName } from './editors.js';
 import { taskRow } from './views.js';
 
@@ -14,10 +15,11 @@ export function MoreView() {
     h('div', { class: 'card' }, h('ul', { class: 'list' },
       item('#/more/tasks', 'task', 'Tasks & lists', 'To-do, groceries, shopping'),
       item('#/more/family', 'people', 'Family profiles', membersList().map((m) => m.name).join(', ')),
+      item('#/more/groups', 'people', 'Family groups', groupsList().length ? groupsList().map((g) => g.name).join(', ') : 'Nuclear, extended family…'),
       item('#/more/people', 'user', 'People & invites', 'Who can sign in to this household'),
       item('#/more/places', 'pin', 'Saved places', 'Home, school, favourite spots'))),
     h('div', { class: 'card' }, h('ul', { class: 'list' },
-      item('#/more/notifications', 'bell', 'Notifications', 'Reminders on this device'),
+      item('#/more/notifications', 'bell', 'Notifications', 'Reminders and family updates'),
       item('#/more/sync', 'link', 'Connected calendars', 'Google, Outlook, Apple — in and out'),
       item('#/more/household', 'home', 'Household', state.household ? `${state.household.name} · ${state.household.timezone}` : ''),
       item('#/more/data', 'download', 'Your data', 'Export or delete'),
@@ -46,10 +48,11 @@ export function TasksView(rerender) {
   };
   quick.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addQuick(); } });
   return h('div', { class: 'page' }, back('Tasks & lists'),
-    h('div', { class: 'filter' }, lists.map((l) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(l.id === currentList), onclick: () => { currentList = l.id; rerender(); } }, l.name)),
+    h('div', { class: 'filter' }, lists.map((l) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(l.id === currentList), onclick: () => { currentList = l.id; rerender(); } }, l.name, l.groupId ? h('span', { class: 'faint', title: `${groupName(l.groupId) || 'Group'} only` }, ' 👥') : null)),
       canEdit() ? h('button', { type: 'button', class: 'chip', onclick: () => listEditor(null, rerender) }, '+ New list') : null),
     list ? h('div', { class: 'card' },
       h('h2', null, list.name, h('span', { class: 'spacer' }), canEdit() ? h('button', { type: 'button', class: 'btn ghost sm', onclick: () => listEditor(list, rerender) }, 'Edit list') : null),
+      list.groupId ? h('p', { class: 'muted small', style: { margin: '-4px 0 8px' } }, `👥 Only ${groupName(list.groupId) || 'a family group'} can see this list`) : null,
       canEdit() ? h('div', { class: 'quick-add' }, quick, h('button', { type: 'button', class: 'btn primary', onclick: addQuick, 'aria-label': 'Add' }, icon('plus'))) : null,
       open.length ? h('ul', { class: 'list', style: { marginTop: '8px' } }, open.map((t) => taskRow(t))) : h('div', { class: 'empty' }, 'Nothing here yet.'),
       done.length ? [h('div', { class: 'section-title' }, 'Done'), h('ul', { class: 'list' }, done.map((t) => taskRow(t)))] : null) : null,
@@ -59,10 +62,15 @@ function listEditor(l, rerender) {
   const name = h('input', { class: 'input', value: l ? l.name : '', maxlength: 60, autofocus: true });
   const kind = h('select', { class: 'input', disabled: !!l }, h('option', { value: 'todo' }, 'To-do list'), h('option', { value: 'shopping' }, 'Shopping list'));
   kind.value = l ? l.kind : 'todo';
+  const mine = myGroups();
+  const who = h('select', { class: 'input' }, h('option', { value: '' }, 'Everyone in the family'), mine.map((g) => h('option', { value: g.id }, `${g.name} only`)));
+  who.value = l && l.groupId && mine.some((g) => g.id === l.groupId) ? l.groupId : '';
   const err = h('div');
   const s = sheet({
     title: l ? 'Edit list' : 'New list',
-    body: h('div', null, h('label', { class: 'field' }, h('span', { class: 'label' }, 'Name'), name), h('label', { class: 'field' }, h('span', { class: 'label' }, 'Type'), kind), err),
+    body: h('div', null, h('label', { class: 'field' }, h('span', { class: 'label' }, 'Name'), name), h('label', { class: 'field' }, h('span', { class: 'label' }, 'Type'), kind),
+      h('label', { class: 'field' }, h('span', { class: 'label' }, 'Who can see it'), who,
+        h('p', { class: 'hint' }, mine.length ? 'Limit a list to one of your family groups — handy for gift lists.' : 'Tip: create family groups in More → Family groups to keep a list to just some people.')), err),
     foot: [
       l ? h('button', { type: 'button', class: 'btn danger', onclick: async () => {
         if (!(await confirmDialog('Delete list?', `“${l.name}” and all its items will be deleted.`, 'Delete', true))) return;
@@ -71,8 +79,9 @@ function listEditor(l, rerender) {
       h('button', { type: 'button', class: 'btn primary', onclick: async () => {
         if (!name.value.trim()) return;
         try {
-          if (l) await mutate({ method: 'PATCH', path: `/api/lists/${l.id}`, body: { name: name.value.trim(), version: l.version }, kind: 'lists', offlineOk: false });
-          else { const r = await mutate({ method: 'POST', path: '/api/lists', body: { name: name.value.trim(), kind: kind.value }, kind: 'lists', offlineOk: false }); currentList = r.list.id; }
+          const groupId = who.value || null;
+          if (l) await mutate({ method: 'PATCH', path: `/api/lists/${l.id}`, body: { name: name.value.trim(), groupId, version: l.version }, kind: 'lists', offlineOk: false });
+          else { const r = await mutate({ method: 'POST', path: '/api/lists', body: { name: name.value.trim(), kind: kind.value, groupId }, kind: 'lists', offlineOk: false }); currentList = r.list.id; }
           s.close(); rerender();
         } catch (e) { err.replaceChildren(h('div', { class: 'banner bad' }, errorText(e))); }
       } }, 'Save')],
@@ -82,11 +91,11 @@ function listEditor(l, rerender) {
 // ---------- family profiles ----------
 export function FamilyView(rerender) {
   return h('div', { class: 'page' }, back('Family profiles'),
-    h('p', { class: 'muted' }, 'Profiles are who events and tasks are for. They don’t need their own login — invite people separately if they should sign in.'),
+    h('p', { class: 'muted' }, 'Profiles are who events and tasks are for. Add a photo or an avatar so everyone is easy to spot. Profiles don’t need their own login — invite people separately if they should sign in.'),
     h('div', { class: 'card' }, h('ul', { class: 'list' }, membersList().map((m) => h('li', null,
       h('button', { type: 'button', class: 'item', onclick: () => memberEditor(m, rerender), disabled: !canEdit() },
-        h('span', { class: 'avatar', '--c': m.color }, initials(m.name)),
-        h('span', { class: 'grow' }, h('div', { class: 'title' }, m.name), h('div', { class: 'meta' }, m.kind === 'child' ? 'Child' : 'Adult')),
+        avatarEl(m, { size: 40 }),
+        h('span', { class: 'grow' }, h('div', { class: 'title' }, m.name), h('div', { class: 'meta' }, [m.kind === 'child' ? 'Child' : 'Adult', ...groupsList().filter((g) => g.memberIds.includes(m.id)).map((g) => g.name)].join(' · '))),
         canEdit() ? icon('chev', 'chev') : null))))),
     canEdit() ? h('button', { type: 'button', class: 'btn block primary', onclick: () => memberEditor(null, rerender) }, icon('plus'), 'Add a profile') : null);
 }
@@ -94,14 +103,39 @@ function memberEditor(m, rerender) {
   const name = h('input', { class: 'input', value: m ? m.name : '', maxlength: 40, autofocus: true, placeholder: 'e.g. Grandma' });
   let color = m ? m.color : COLORS.find((c) => !membersList().some((x) => x.color === c)) || COLORS[0];
   const sw = h('div', { class: 'colors', role: 'radiogroup', 'aria-label': 'Colour' });
-  const renderSw = () => sw.replaceChildren(...COLORS.map((c) => h('button', { type: 'button', class: 'swatch', '--c': c, role: 'radio', 'aria-checked': String(c === color), 'aria-label': c, onclick: () => { color = c; renderSw(); } })));
+  const renderSw = () => { sw.replaceChildren(...COLORS.map((c) => h('button', { type: 'button', class: 'swatch', '--c': c, role: 'radio', 'aria-checked': String(c === color), 'aria-label': c, onclick: () => { color = c; renderSw(); if (typeof renderAvatar === 'function') renderAvatar(); } }))); };
   renderSw();
   const kind = h('select', { class: 'input' }, h('option', { value: 'adult' }, 'Adult'), h('option', { value: 'child' }, 'Child'));
   kind.value = m ? m.kind : 'child';
   const err = h('div');
+  // Picture: a photo (cropped square and shrunk on this device) or an emoji avatar.
+  let avatar = m ? m.avatar || null : null;
+  const preview = h('div');
+  const fileIn = h('input', { type: 'file', accept: 'image/*', hidden: true });
+  const emojiRow = h('div', { class: 'icon-grid', role: 'group', 'aria-label': 'Avatars', hidden: true, style: { marginTop: '8px' } });
+  const renderAvatar = () => {
+    preview.replaceChildren(avatarEl({ name: name.value || '?', color, avatar }, { size: 64 }));
+    emojiRow.replaceChildren(...AVATAR_CHOICES.map((a) => h('button', { type: 'button', class: 'chip', 'aria-label': `Avatar ${a}`, 'aria-pressed': String(avatar === a), onclick: () => { avatar = a; renderAvatar(); } }, a)));
+  };
+  fileIn.addEventListener('change', async () => {
+    const f = fileIn.files && fileIn.files[0];
+    fileIn.value = '';
+    if (!f) return;
+    try { avatar = await photoToDataUrl(f); renderAvatar(); } catch (e) { err.replaceChildren(h('div', { class: 'banner bad' }, e.message || 'Could not use that picture.')); }
+  });
+  name.addEventListener('input', renderAvatar);
+  const picture = h('div', { class: 'field' }, h('span', { class: 'label' }, 'Picture'),
+    h('div', { class: 'avatar-edit' }, preview,
+      h('div', { class: 'stack', style: { gap: '6px' } },
+        h('div', { class: 'row', style: { gap: '6px', flexWrap: 'wrap' } },
+          h('button', { type: 'button', class: 'btn sm', onclick: () => fileIn.click() }, '📷 Photo'),
+          h('button', { type: 'button', class: 'btn sm', onclick: () => { emojiRow.hidden = !emojiRow.hidden; } }, '😀 Avatar'),
+          h('button', { type: 'button', class: 'btn ghost sm', onclick: () => { avatar = null; renderAvatar(); } }, 'Remove')),
+        h('p', { class: 'hint', style: { margin: 0 } }, 'Photos are cropped to a square and shrunk on your phone before they’re saved.'))),
+    emojiRow, fileIn);
   const s = sheet({
     title: m ? 'Edit profile' : 'New profile',
-    body: h('div', null, h('label', { class: 'field' }, h('span', { class: 'label' }, 'Name'), name), h('div', { class: 'field' }, h('span', { class: 'label' }, 'Colour'), sw),
+    body: h('div', null, h('label', { class: 'field' }, h('span', { class: 'label' }, 'Name'), name), picture, h('div', { class: 'field' }, h('span', { class: 'label' }, 'Colour'), sw),
       h('label', { class: 'field' }, h('span', { class: 'label' }, 'Type'), kind), err),
     foot: [
       m ? h('button', { type: 'button', class: 'btn danger', onclick: async () => {
@@ -110,11 +144,82 @@ function memberEditor(m, rerender) {
       } }, 'Remove') : h('button', { type: 'button', class: 'btn', onclick: () => s.close() }, 'Cancel'),
       h('button', { type: 'button', class: 'btn primary', onclick: async () => {
         if (!name.value.trim()) { err.replaceChildren(h('p', { class: 'err' }, 'Enter a name.')); return; }
-        const body = { name: name.value.trim(), color, kind: kind.value };
+        const body = { name: name.value.trim(), color, kind: kind.value, avatar };
         try {
           if (m) await mutate({ method: 'PATCH', path: `/api/members/${m.id}`, body: { ...body, version: m.version }, kind: 'members', offlineOk: false });
           else await mutate({ method: 'POST', path: '/api/members', body, kind: 'members', offlineOk: false });
           s.close(); rerender();
+        } catch (e) { err.replaceChildren(h('div', { class: 'banner bad' }, errorText(e))); }
+      } }, 'Save')],
+  });
+  renderAvatar();
+}
+
+async function photoToDataUrl(file, size = 192) {
+  if (!/^image\//.test(file.type || 'image/')) throw new Error('Please choose a picture.');
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('Could not open that picture. Try a JPEG or PNG.')); i.src = url; });
+    const side = Math.min(img.naturalWidth, img.naturalHeight);
+    const c = document.createElement('canvas');
+    c.width = size; c.height = size;
+    c.getContext('2d').drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, size, size);
+    let q = 0.85;
+    let out = c.toDataURL('image/jpeg', q);
+    while (out.length > 100000 && q > 0.4) { q -= 0.1; out = c.toDataURL('image/jpeg', q); }
+    return out;
+  } finally { URL.revokeObjectURL(url); }
+}
+
+// ---------- family groups ----------
+export function GroupsView(rerender) {
+  const groups = groupsList();
+  return h('div', { class: 'page' }, back('Family groups'),
+    h('p', { class: 'muted' }, 'Groups let you share some events and lists with just part of the family — for example “Nuclear family” for school and chores, and “Extended family” for holidays with grandparents and cousins. When adding an event, choose who to share it with.'),
+    groups.length ? h('div', { class: 'card' }, h('ul', { class: 'list' }, groups.map((g) => {
+      const ms = g.memberIds.map(member).filter(Boolean);
+      return h('li', null, h('button', { type: 'button', class: 'item', onclick: () => groupEditor(g, rerender), disabled: !canEdit() },
+        h('span', { class: 'row', style: { gap: '0' } }, ms.slice(0, 4).map((m, i) => h('span', { style: { marginLeft: i ? '-10px' : '0' } }, avatarEl(m, { size: 32 })))),
+        h('span', { class: 'grow' }, h('div', { class: 'title' }, g.name), h('div', { class: 'meta' }, ms.map((m) => m.name).join(', ') || 'No one yet')),
+        canEdit() ? icon('chev', 'chev') : null));
+    }))) : h('div', { class: 'card empty' }, h('div', { class: 'big' }, 'No groups yet'), 'Start with “Nuclear family” and “Extended family”.'),
+    canEdit() ? h('div', { class: 'stack' },
+      h('button', { type: 'button', class: 'btn block primary', onclick: () => groupEditor(null, rerender) }, icon('plus'), 'New group'),
+      !groups.length ? h('button', { type: 'button', class: 'btn block', onclick: async () => {
+        try {
+          const all = membersList().map((m) => m.id);
+          await api('POST', '/api/groups', { name: 'Nuclear family', memberIds: all });
+          await api('POST', '/api/groups', { name: 'Extended family', memberIds: all });
+          await sync(); toast('Two groups created — edit them to choose who’s in each.'); rerender();
+        } catch (e) { toast(errorText(e), { bad: true }); }
+      } }, 'Quick start: create “Nuclear” and “Extended family”') : null) : null,
+    h('p', { class: 'faint small' }, 'Groups are made of family profiles. Someone sees a group’s events when their login is linked to a profile in the group (People & invites → Edit).'));
+}
+
+function groupEditor(g, rerender) {
+  const name = h('input', { class: 'input', value: g ? g.name : '', maxlength: 40, autofocus: !g, placeholder: 'e.g. Extended family' });
+  const set = new Set(g ? g.memberIds : []);
+  const chips = h('div', { class: 'chips', role: 'group', 'aria-label': 'Who is in this group' });
+  const render = () => chips.replaceChildren(...membersList().map((m) => h('button', {
+    type: 'button', class: 'chip', '--c': m.color, 'aria-pressed': String(set.has(m.id)), onclick: () => { if (set.has(m.id)) set.delete(m.id); else set.add(m.id); render(); },
+  }, avatarEl(m, { size: 22 }), m.name)));
+  render();
+  const err = h('div');
+  const s = sheet({
+    title: g ? 'Edit group' : 'New group',
+    body: h('div', null, h('label', { class: 'field' }, h('span', { class: 'label' }, 'Name'), name),
+      h('div', { class: 'field' }, h('span', { class: 'label' }, 'Who’s in it'), chips, h('p', { class: 'hint' }, 'Missing someone? Add them in More → Family profiles first.')), err),
+    foot: [
+      g ? h('button', { type: 'button', class: 'btn danger', onclick: async () => {
+        if (!(await confirmDialog(`Delete “${g.name}”?`, 'Events and lists shared with this group will become visible to the whole family.', 'Delete', true))) return;
+        try { await api('DELETE', `/api/groups/${g.id}`); await sync(); s.close(); rerender(); } catch (e) { err.replaceChildren(h('div', { class: 'banner bad' }, errorText(e))); }
+      } }, 'Delete') : h('button', { type: 'button', class: 'btn', onclick: () => s.close() }, 'Cancel'),
+      h('button', { type: 'button', class: 'btn primary', onclick: async () => {
+        if (!name.value.trim()) { err.replaceChildren(h('p', { class: 'err' }, 'Give the group a name.')); return; }
+        try {
+          if (g) await api('PATCH', `/api/groups/${g.id}`, { name: name.value.trim(), memberIds: [...set], version: g.version });
+          else await api('POST', '/api/groups', { name: name.value.trim(), memberIds: [...set] });
+          await sync(); s.close(); rerender();
         } catch (e) { err.replaceChildren(h('div', { class: 'banner bad' }, errorText(e))); }
       } }, 'Save')],
   });
@@ -130,7 +235,7 @@ export function PeopleView(rerender) {
       root.replaceChildren(back('People & invites'),
         h('p', { class: 'muted' }, 'Owners manage the household. Adults can add and edit everything. Children can see shared events and tick off tasks.'),
         h('div', { class: 'card' }, h('ul', { class: 'list' }, people.map((p) => h('li', null, h('div', { class: 'item' },
-          h('span', { class: 'avatar', '--c': (member(p.member_id) || { color: 'var(--ink-3)' }).color }, initials(p.name)),
+          member(p.member_id) ? avatarEl(member(p.member_id)) : h('span', { class: 'avatar', '--c': 'var(--ink-3)' }, initials(p.name)),
           h('span', { class: 'grow' }, h('div', { class: 'title' }, p.name, p.id === state.me.user.id ? ' (you)' : ''), h('div', { class: 'meta' }, [roleName[p.role], p.email, member(p.member_id) ? `profile: ${member(p.member_id).name}` : null].filter(Boolean).join(' · '))),
           isOwner() ? h('button', { type: 'button', class: 'btn ghost sm', onclick: () => personEditor(p, rerender) }, 'Edit') :
             p.id === state.me.user.id ? h('button', { type: 'button', class: 'btn ghost sm', onclick: () => leave(p) }, 'Leave') : null))))),
@@ -395,7 +500,16 @@ export function NotificationsView(rerender) {
   const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   const status = h('div');
   const card = h('div', { class: 'card' }, h('h2', null, 'Reminders on this device'), status);
-  root.append(card, h('div', { class: 'card' }, h('h2', null, 'Always in your inbox'), h('p', { class: 'muted small', style: { margin: 0 } }, 'Every reminder also appears in the Inbox tab, even if phone notifications are off.')));
+  const actT = h('input', { type: 'checkbox', checked: state.me.notifyActivity !== false });
+  actT.addEventListener('change', async () => {
+    try { await api('PATCH', '/api/me/prefs', { notifyActivity: actT.checked }); state.me.notifyActivity = actT.checked; toast(actT.checked ? 'Family updates are on' : 'Family updates are off'); }
+    catch (e) { actT.checked = !actT.checked; toast(errorText(e), { bad: true }); }
+  });
+  root.append(card,
+    h('div', { class: 'card' }, h('h2', null, 'Family updates'),
+      h('label', { class: 'switch field', style: { marginBottom: 0 } }, h('span', null, h('span', { style: { fontWeight: 650 } }, 'Tell me when the family changes things'),
+        h('span', { class: 'hint', style: { display: 'block', margin: 0 } }, 'When someone adds, moves or cancels an event you can see, or assigns you a task.')), actT)),
+    h('div', { class: 'card' }, h('h2', null, 'Always in your inbox'), h('p', { class: 'muted small', style: { margin: 0 } }, 'Every reminder and update also appears in the Inbox tab, even if phone notifications are off.')));
   (async () => {
     if (!supported) {
       status.replaceChildren(h('div', { class: 'banner warn' }, ios && !standalone
@@ -415,7 +529,7 @@ export function NotificationsView(rerender) {
           } }, 'Send a test'),
           h('button', { type: 'button', class: 'btn', onclick: async () => { await api('POST', '/api/push/unsubscribe', { endpoint: sub.endpoint }).catch(() => {}); await sub.unsubscribe(); rerender(); } }, 'Turn off')));
     } else {
-      status.replaceChildren(h('p', { class: 'muted small', style: { marginTop: 0 } }, 'Get a notification on this phone or computer when a reminder is due.'),
+      status.replaceChildren(h('p', { class: 'muted small', style: { marginTop: 0 } }, 'Get a notification on this phone or computer when a reminder is due or someone in the family adds or changes something.'),
         h('button', { type: 'button', class: 'btn primary block', onclick: async () => {
           try {
             const p = await Notification.requestPermission();

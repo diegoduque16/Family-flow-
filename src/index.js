@@ -1,6 +1,8 @@
 // Family Flow Worker entry: API router, ICS feed, static app (via Assets), cron jobs.
 import { HttpError, json, errorResponse } from './lib/util.js';
 import { loadContext, checkCsrf } from './lib/auth.js';
+import { ensureSchema } from './lib/schema.js';
+import * as groups from './routes/groups.js';
 import * as account from './routes/account.js';
 import * as cal from './routes/calendar.js';
 import * as places from './routes/places.js';
@@ -16,6 +18,7 @@ const ROUTES = [
   ['POST', '/api/auth/logout', account.logout, 'optional'],
   ['GET', '/api/me', account.me, 'session'],
   ['POST', '/api/me/password', account.changePassword, 'session'],
+  ['PATCH', '/api/me/prefs', account.updatePrefs, 'household'],
   ['DELETE', '/api/me', account.deleteAccount, 'session'],
   ['POST', '/api/households', account.newHousehold, 'session'],
   ['POST', '/api/households/switch', account.switchHousehold, 'session'],
@@ -28,6 +31,9 @@ const ROUTES = [
   ['POST', '/api/members', account.createMember, 'household'],
   ['PATCH', '/api/members/:id', account.updateMember, 'household'],
   ['DELETE', '/api/members/:id', account.deleteMember, 'household'],
+  ['POST', '/api/groups', groups.createGroup, 'household'],
+  ['PATCH', '/api/groups/:id', groups.updateGroup, 'household'],
+  ['DELETE', '/api/groups/:id', groups.deleteGroup, 'household'],
   ['POST', '/api/invites', account.createInvite, 'household'],
   ['GET', '/api/invites/:token', account.inviteInfo, 'public'],
   ['POST', '/api/invites/:token/accept', account.joinWithInvite, 'session'],
@@ -104,7 +110,7 @@ function withHeaders(res) {
   return r;
 }
 
-export async function handle(request, env) {
+export async function handle(request, env, execCtx = null) {
   const url = new URL(request.url);
   const path = url.pathname;
   if (!path.startsWith('/api/') && !path.startsWith('/cal/') && !path.startsWith('/oauth/')) {
@@ -112,6 +118,7 @@ export async function handle(request, env) {
     return new Response('Not found', { status: 404 });
   }
   try {
+    await ensureSchema(env.DB);
     let pathMatched = false;
     for (const r of compiled) {
       const m = r.re.exec(path);
@@ -126,6 +133,10 @@ export async function handle(request, env) {
         if (!ctx && r.access !== 'optional') throw new HttpError(401, 'signed_out', 'Please sign in.');
         if (r.access === 'household' && !ctx.household) throw new HttpError(409, 'no_household', 'Create or join a household first.');
       }
+      if (ctx) {
+        ctx.env = env;
+        ctx.waitUntil = execCtx && execCtx.waitUntil ? (pr) => execCtx.waitUntil(pr.catch((e) => console.error('background task failed', e))) : null;
+      }
       return withHeaders(await r.handler(request, env, ctx, params));
     }
     if (pathMatched) throw new HttpError(405, 'method', 'Method not allowed.');
@@ -136,8 +147,9 @@ export async function handle(request, env) {
 }
 
 export default {
-  fetch: (request, env) => handle(request, env),
+  fetch: (request, env, execCtx) => handle(request, env, execCtx),
   async scheduled(event, env, execCtx) {
+    await ensureSchema(env.DB);
     if (event.cron === '17 3 * * *') {
       execCtx.waitUntil((async () => {
         try { await ops.housekeeping(env); } catch (e) { console.error('housekeeping failed', e); }

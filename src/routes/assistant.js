@@ -7,6 +7,7 @@ import { requireRole } from '../lib/auth.js';
 import { todayLocal, buildRrule, utcToLocal, localToUtc } from '../lib/time.js';
 import { eventSchema, taskSchema, normalizeEvent, createEventCore, createTaskCore, listOccurrences } from './calendar.js';
 import { searchPlaces } from './places.js';
+import { listVisible } from '../lib/audience.js';
 
 const DEFAULT_MODEL = 'claude-sonnet-5-5';
 const FALLBACK_MODELS = ['claude-sonnet-4-5', 'claude-3-5-haiku-latest'];
@@ -266,7 +267,8 @@ export async function chat(req, env, ctx) {
   const history = (await all(db, 'SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY created_at, rowid', conv.id))
     .map((m) => ({ role: m.role, content: parseJsonCol(m.content, m.content) }));
   const members = await all(db, 'SELECT id, name, kind FROM members WHERE household_id = ? AND deleted_at IS NULL ORDER BY sort', ctx.household.id);
-  const lists = await all(db, 'SELECT id, name, kind FROM lists WHERE household_id = ? AND deleted_at IS NULL ORDER BY sort', ctx.household.id);
+  const lists = (await all(db, 'SELECT id, name, kind, group_id FROM lists WHERE household_id = ? AND deleted_at IS NULL ORDER BY sort', ctx.household.id))
+    .filter((l) => listVisible(l, ctx)).map(({ id, name, kind }) => ({ id, name, kind }));
   const today = todayLocal(ctx.household.timezone);
   const upcoming = (await listOccurrences(db, ctx, today, utcToLocal(localToUtc(today, 'UTC') + 7 * 86400000, 'UTC', false))).slice(0, 25);
 

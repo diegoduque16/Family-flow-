@@ -4,6 +4,7 @@ import { one, all, run, getSetting, setSetting } from '../lib/db.js';
 import { requireRole } from '../lib/auth.js';
 import { getVapidKeys, sendPush } from '../lib/push.js';
 import { refreshRecurringReminders } from '../lib/reminders.js';
+import { restrictedAudience } from '../lib/audience.js';
 import { geoapify, photon } from './places.js';
 
 // ---------- inbox ----------
@@ -86,10 +87,16 @@ export async function deliverDueReminders(env, at = now()) {
     if (!claim.meta || claim.meta.changes !== 1) continue;
     try {
       const stale = at - n.fire_at > 6 * 3600000; // more than 6h late: inbox only, don't buzz phones
-      await run(db, 'INSERT INTO notifications (id, household_id, user_id, kind, title, body, ref_type, ref_id, created_at) VALUES (?,?,?,?,?,?,?,?,?)',
-        uid('n_'), n.household_id, n.only_user_id, 'reminder', n.title, n.body, n.ref_type, n.ref_id, at);
+      // Items limited to a family group only go to that group's members.
+      const limited = n.only_user_id ? null : await restrictedAudience(db, n.ref_type, n.ref_id);
+      const inboxFor = n.only_user_id ? [n.only_user_id] : limited || [null];
+      for (const u of inboxFor) {
+        await run(db, 'INSERT INTO notifications (id, household_id, user_id, kind, title, body, ref_type, ref_id, created_at) VALUES (?,?,?,?,?,?,?,?,?)',
+          uid('n_'), n.household_id, u, 'reminder', n.title, n.body, n.ref_type, n.ref_id, at);
+      }
       const users = n.only_user_id
         ? [{ user_id: n.only_user_id }]
+        : limited ? limited.map((user_id) => ({ user_id }))
         : await all(db, 'SELECT user_id FROM memberships WHERE household_id = ?', n.household_id);
       const errors = [];
       if (!stale) {

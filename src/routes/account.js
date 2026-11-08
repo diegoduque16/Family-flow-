@@ -1,4 +1,5 @@
 // Sign-up, sign-in, households, family profiles, invitations, data export / deletion.
+import { eventVisible, listVisible } from '../lib/audience.js';
 import { HttpError, json, readJson, validate, v, uid, now, randomToken, sha256, EMAIL_RE, COLOR_RE, isValidTimeZone } from '../lib/util.js';
 import { one, all, run, nextSeq, audit, rateLimit } from '../lib/db.js';
 import { hashPassword, verifyPassword, createSession, sessionCookie, clearCookie, requireRole } from '../lib/auth.js';
@@ -18,7 +19,7 @@ const DEFAULT_LISTS = [
 const ip = (req) => req.headers.get('cf-connecting-ip') || 'local';
 
 export function memberOut(r) {
-  return { id: r.id, name: r.name, color: r.color, kind: r.kind, sort: r.sort, version: r.version, seq: r.seq, deleted: !!r.deleted_at };
+  return { id: r.id, name: r.name, color: r.color, kind: r.kind, avatar: r.avatar || null, sort: r.sort, version: r.version, seq: r.seq, deleted: !!r.deleted_at };
 }
 
 async function createHousehold(db, { name, timezone }, userId) {
@@ -113,6 +114,7 @@ export async function me(req, env, ctx) {
     household: ctx.household ? { id: ctx.household.id, name: ctx.household.name, timezone: ctx.household.timezone } : null,
     role: ctx.role,
     memberId: ctx.memberId,
+    notifyActivity: ctx.household ? ((await one(db, 'SELECT notify_activity FROM memberships WHERE household_id = ? AND user_id = ?', ctx.household.id, ctx.user.id)) || {}).notify_activity !== 0 : true,
     households,
     features: {
       assistant: !!env.ANTHROPIC_API_KEY,
@@ -122,6 +124,13 @@ export async function me(req, env, ctx) {
       microsoftCalendar: !!(env.MS_CLIENT_ID && env.MS_CLIENT_SECRET),
     },
   });
+}
+
+// Personal settings for this household (currently: family-activity alerts on/off).
+export async function updatePrefs(req, env, ctx) {
+  const body = validate(v.object({ notifyActivity: v.boolean() }), await readJson(req));
+  await run(env.DB, 'UPDATE memberships SET notify_activity = ? WHERE household_id = ? AND user_id = ?', body.notifyActivity ? 1 : 0, ctx.household.id, ctx.user.id);
+  return json({ ok: true, notifyActivity: body.notifyActivity });
 }
 
 export async function switchHousehold(req, env, ctx) {
@@ -150,11 +159,22 @@ export async function updateHousehold(req, env, ctx) {
 }
 
 // ---------- family profiles ----------
+// A profile picture is either a small photo (data URL, resized on the device) or an emoji avatar.
+const AVATAR_MAX = 120_000;
+function cleanAvatar(x) {
+  if (x === null || x === undefined || x === '') return null;
+  const s = String(x);
+  if (/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(s) && s.length <= AVATAR_MAX) return s;
+  if (s.length <= 16 && !/^data:/.test(s) && !/[<>&"'\\]/.test(s)) return s;
+  throw new HttpError(422, 'invalid', 'The picture must be a JPEG, PNG or WebP photo under about 80 KB, or an emoji.', { field: 'avatar' });
+}
+
 const memberSchema = v.object({
   name: v.string({ min: 1, max: 40 }),
   color: v.string({ pattern: COLOR_RE }),
   kind: v.string({ oneOf: ['adult', 'child'] }).default('adult'),
   sort: v.number({ int: true, min: 0, max: 999 }).optional(),
+  avatar: v.string({ max: AVATAR_MAX }).nullable(),
 });
 
 export async function createMember(req, env, ctx) {
@@ -166,8 +186,8 @@ export async function createMember(req, env, ctx) {
   const seq = await nextSeq(db, ctx.household.id);
   const id = uid('m_');
   const t = now();
-  await run(db, 'INSERT INTO members (id, household_id, name, color, kind, sort, version, seq, created_at, updated_at) VALUES (?,?,?,?,?,?,1,?,?,?)',
-    id, ctx.household.id, body.name, body.color, body.kind, body.sort ?? count.n, seq, t, t);
+  await run(db, 'INSERT INTO members (id, household_id, name, color, kind, sort, version, seq, created_at, updated_at, avatar) VALUES (?,?,?,?,?,?,1,?,?,?,?)',
+    id, ctx.household.id, body.name, body.color, body.kind, body.sort ?? count.n, seq, t, t, cleanAvatar(body.avatar));
   await audit(db, { householdId: ctx.household.id, userId: ctx.user.id, action: 'member.create', refType: 'member', refId: id });
   return json({ member: memberOut(await one(db, 'SELECT * FROM members WHERE id = ?', id)) }, 201);
 }
@@ -176,6 +196,7 @@ export async function updateMember(req, env, ctx, { id }) {
   requireRole(ctx, ['owner', 'adult']);
   const body = await readJson(req);
   const patch = validate(v.object({
+    avatar: v.string({ max: AVATAR_MAX }).nullable(),
     name: v.string({ min: 1, max: 40 }).optional(),
     color: v.string({ pattern: COLOR_RE }).optional(),
     kind: v.string({ oneOf: ['adult', 'child'] }).optional(),
@@ -187,8 +208,9 @@ export async function updateMember(req, env, ctx, { id }) {
   if (!cur) throw new HttpError(404, 'not_found', 'Family member not found.');
   if (cur.version !== patch.version) throw new HttpError(409, 'conflict', 'Someone else changed this profile. Here is the latest version.', { current: memberOut(cur) });
   const seq = await nextSeq(db, ctx.household.id);
-  await run(db, 'UPDATE members SET name = ?, color = ?, kind = ?, sort = ?, version = version + 1, seq = ?, updated_at = ? WHERE id = ?',
-    patch.name ?? cur.name, patch.color ?? cur.color, patch.kind ?? cur.kind, patch.sort ?? cur.sort, seq, now(), id);
+  const avatar = 'avatar' in body ? cleanAvatar(patch.avatar) : cur.avatar;
+  await run(db, 'UPDATE members SET name = ?, color = ?, kind = ?, sort = ?, avatar = ?, version = version + 1, seq = ?, updated_at = ? WHERE id = ?',
+    patch.name ?? cur.name, patch.color ?? cur.color, patch.kind ?? cur.kind, patch.sort ?? cur.sort, avatar, seq, now(), id);
   return json({ member: memberOut(await one(db, 'SELECT * FROM members WHERE id = ?', id)) });
 }
 
@@ -307,11 +329,14 @@ export async function exportHousehold(req, env, ctx) {
     exportedAt: new Date().toISOString(),
     household: await one(db, 'SELECT id, name, timezone, created_at FROM households WHERE id = ?', hh),
     members: await all(db, 'SELECT * FROM members WHERE household_id = ? AND deleted_at IS NULL', hh),
-    events: await all(db, "SELECT * FROM events WHERE household_id = ? AND deleted_at IS NULL AND (visibility = 'shared' OR owner_user_id = ?)", hh, ctx.user.id),
-    lists: await all(db, 'SELECT * FROM lists WHERE household_id = ? AND deleted_at IS NULL', hh),
+    events: (await all(db, 'SELECT * FROM events WHERE household_id = ? AND deleted_at IS NULL', hh)).filter((r) => eventVisible(r, ctx)),
+    lists: (await all(db, 'SELECT * FROM lists WHERE household_id = ? AND deleted_at IS NULL', hh)).filter((r) => listVisible(r, ctx)),
     tasks: await all(db, 'SELECT * FROM tasks WHERE household_id = ? AND deleted_at IS NULL', hh),
+    groups: await all(db, 'SELECT id, name, member_ids FROM family_groups WHERE household_id = ? AND deleted_at IS NULL', hh),
     places: await all(db, 'SELECT * FROM places WHERE household_id = ?', hh),
   };
+  const listIds = new Set(data.lists.map((l) => l.id));
+  data.tasks = data.tasks.filter((t) => listIds.has(t.list_id));
   await audit(db, { householdId: hh, userId: ctx.user.id, action: 'household.export' });
   return new Response(JSON.stringify(data, null, 2), {
     headers: {

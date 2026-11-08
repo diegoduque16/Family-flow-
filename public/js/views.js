@@ -3,6 +3,9 @@ import { h, icon, toast, fmtDay, fmtDayShort, fmtMonth, fmtTime, fmtRange, fmtWe
 import { api, state, occurrences, todayStr, nowLocal, membersList, member, listsList, refreshCounts, emit, sync } from './store.js';
 import { openEventDetail, openEventEditor, openTaskEditor, toggleTask, taskDueLabel, errorText, describeRrule } from './editors.js';
 import { utcToLocal } from './time.js';
+import { eventIcon } from './icons.js';
+
+const withIcon = (ev) => { const ic = eventIcon(ev); return ic ? `${ic} ${ev.title}` : ev.title; };
 
 const pref = {
   get(k, d) { try { const v = localStorage.getItem(`ff:${k}`); return v === null ? d : JSON.parse(v); } catch { return d; } },
@@ -25,7 +28,7 @@ export function evItem(o, { past = false } = {}) {
     h('span', { class: 'bar', ...barColors(ev.assignees) }),
     h('span', { class: 'when' }, ev.allDay ? 'All day' : [fmtTime(o.start), h('div', { class: 'end' }, fmtTime(o.end))]),
     h('span', { class: 'what' },
-      h('div', { class: 'title' }, ev.title),
+      h('div', { class: 'title' }, withIcon(ev)),
       h('div', { class: 'meta' },
         whoDots(ev.assignees),
         ev.location ? h('span', { class: 'row', style: { gap: '3px' } }, ev.location.name || ev.location.address.split(',')[0]) : null,
@@ -44,7 +47,15 @@ export function taskRow(t, { showList = false } = {}) {
       h('div', { class: 'meta row', style: { gap: '8px', flexWrap: 'wrap' } },
         taskDueLabel(t), asg ? h('span', { class: 'who' }, h('span', { class: 'dot', '--c': asg.color }), asg.name) : null,
         t.repeat ? h('span', null, `↻ ${t.repeat}`) : null, list ? h('span', { class: 'faint' }, list.name) : null,
-        t._pending ? h('span', { style: { color: 'var(--warn)' } }, 'Waiting to sync') : null)));
+        t._pending ? h('span', { style: { color: 'var(--warn)' } }, 'Waiting to sync') : null)),
+    buyLink(t));
+}
+
+// Shopping items get a one-tap "Buy on Amazon" link (opens an Amazon search; checkout happens on Amazon).
+function buyLink(t) {
+  const l = state.lists.get(t.listId);
+  if (!l || l.kind !== 'shopping' || t.done) return null;
+  return h('a', { class: 'btn ghost sm buy', href: `https://www.amazon.com/s?k=${encodeURIComponent(t.title)}`, target: '_blank', rel: 'noopener noreferrer', 'aria-label': `Buy “${t.title}” on Amazon` }, 'Amazon ›');
 }
 
 function statusBanner() {
@@ -83,7 +94,7 @@ export function TodayView() {
     state.proposalsCount ? h('a', { class: 'banner info', href: '#/inbox', style: { textDecoration: 'none' } }, icon('assistant'), `${state.proposalsCount} suggestion${state.proposalsCount > 1 ? 's' : ''} from the assistant waiting for you to confirm`) : null,
     next ? h('button', { type: 'button', class: 'next-up', onclick: () => openEventDetail(next.ev, next) },
       h('div', { class: 'k' }, next.startUtc <= nowMs ? 'Happening now' : next.start.slice(0, 10) === today ? `Next · in ${untilText(next.startUtc - nowMs)}` : `Next · ${relDay(next.start, today) || fmtDayShort(next.start)}`),
-      h('div', { class: 't' }, next.ev.title),
+      h('div', { class: 't' }, withIcon(next.ev)),
       h('div', { class: 'm' }, fmtRange(next, false), next.ev.location ? ` · ${next.ev.location.name || next.ev.location.address}` : '', (next.ev.assignees || []).length ? ` · ${next.ev.assignees.map((a) => (member(a) || {}).name).filter(Boolean).join(', ')}` : '')) : null,
     h('section', { class: 'card' },
       h('h2', null, 'Today', h('span', { class: 'spacer' }), h('a', { class: 'btn ghost sm', href: '#/calendar' }, 'Calendar')),
@@ -226,7 +237,7 @@ function dayView(d, today, f) {
         type: 'button', class: 'blk', '--c': m ? m.color : 'var(--ink-3)',
         style: { top: `${(it.s / 60) * HOUR_PX}px`, height: `${Math.max(22, ((it.e - it.s) / 60) * HOUR_PX - 2)}px`, left: `${(it.col / n) * 100}%`, width: `calc(${100 / n}% - 3px)` },
         onclick: () => openEventDetail(ev, it.o), 'aria-label': `${ev.title}, ${fmtRange(it.o, false)}`,
-      }, h('b', null, ev.title), `${fmtTime(it.o.start)}${ev.location ? ' · ' + (ev.location.name || ev.location.address.split(',')[0]) : ''}`));
+      }, h('b', null, withIcon(ev)), `${fmtTime(it.o.start)}${ev.location ? ' · ' + (ev.location.name || ev.location.address.split(',')[0]) : ''}`));
     }
   }
   const hours = h('div', { class: 'hours' });
@@ -277,7 +288,7 @@ export function InboxView(rerender) {
           h('span', { class: 'dot', '--c': x.read ? 'transparent' : 'var(--accent)' }),
           h('span', { class: 'grow' }, h('div', { class: 'title', style: { fontWeight: x.read ? 500 : 700 } }, x.title), h('div', { class: 'meta' }, x.body || ''), h('div', { class: 'meta faint' }, new Date(x.createdAt).toLocaleString())),
           icon('chev', 'chev')))))) :
-          h('div', { class: 'card empty' }, h('div', { class: 'big' }, 'No reminders yet'), 'Reminders you set on events and tasks show up here, and on your phone if notifications are on.'));
+          h('div', { class: 'card empty' }, h('div', { class: 'big' }, 'Nothing yet'), 'Reminders, and updates when someone in the family adds or changes an event or assigns you a task, show up here — and on your phone if notifications are on.'));
     } catch (e) {
       root.replaceChildren(...statusBanner(), h('div', { class: 'empty' }, h('div', { class: 'big' }, 'Inbox needs a connection'), errorText(e)));
     }
