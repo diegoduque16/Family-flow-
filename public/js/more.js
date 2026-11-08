@@ -2,6 +2,7 @@
 import { h, icon, toast, sheet, confirmDialog, copyText, initials, avatarEl } from './ui.js';
 import { AVATAR_CHOICES } from './icons.js';
 import { HOLIDAY_REGIONS, isUsZone } from './holidays.js';
+import { micButton, splitItems, cleanTitle } from './voice.js';
 import { api, state, mutate, membersList, listsList, member, sync, clearLocalData, emit, groupsList, myGroups, groupName } from './store.js';
 import { openTaskEditor, placeInput, canEdit, errorText, providerName } from './editors.js';
 import { taskRow } from './views.js';
@@ -48,13 +49,31 @@ export function TasksView(rerender) {
     try { await mutate({ method: 'POST', path: '/api/tasks', body, kind: 'tasks', optimistic: { kind: 'tasks', id: tmp, row: { id: tmp, ...body, done: false, version: 1, sort: 0 } } }); quick.blur(); rerender(); const q2 = document.querySelector('[aria-label="New item"]'); if (q2) q2.focus(); } catch (e) { toast(errorText(e), { bad: true }); quick.value = title; }
   };
   quick.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addQuick(); } });
+  // Voice: shopping lists add every item you name at once; to-do lists put the text in the box to check first.
+  const voiceAdd = async (text) => {
+    if (list && list.kind === 'shopping') {
+      const items = splitItems(text);
+      let n = 0;
+      for (const title of items) {
+        const tmp = `tmp_${Date.now()}_${n}`;
+        const body = { listId: currentList, title, notes: '', due: null, assignee: null, repeat: null, remind: false, eventId: null };
+        try { await mutate({ method: 'POST', path: '/api/tasks', body, kind: 'tasks', optimistic: { kind: 'tasks', id: tmp, row: { id: tmp, ...body, done: false, version: 1, sort: 0 } } }); n++; } catch (e) { toast(errorText(e), { bad: true }); break; }
+      }
+      if (n) toast(n === 1 ? `Added “${items[0]}”` : `Added ${n} items: ${items.slice(0, n).join(', ')}`);
+      rerender();
+    } else {
+      quick.value = cleanTitle(text);
+      quick.focus();
+      toast('Check it, then tap + to add.');
+    }
+  };
   return h('div', { class: 'page' }, back('Tasks & lists'),
     h('div', { class: 'filter' }, lists.map((l) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(l.id === currentList), onclick: () => { currentList = l.id; rerender(); } }, l.name, l.groupId ? h('span', { class: 'faint', title: `${groupName(l.groupId) || 'Group'} only` }, ' 👥') : null)),
       canEdit() ? h('button', { type: 'button', class: 'chip', onclick: () => listEditor(null, rerender) }, '+ New list') : null),
     list ? h('div', { class: 'card' },
       h('h2', null, list.name, h('span', { class: 'spacer' }), canEdit() ? h('button', { type: 'button', class: 'btn ghost sm', onclick: () => listEditor(list, rerender) }, 'Edit list') : null),
       list.groupId ? h('p', { class: 'muted small', style: { margin: '-4px 0 8px' } }, `👥 Only ${groupName(list.groupId) || 'a family group'} can see this list`) : null,
-      canEdit() ? h('div', { class: 'quick-add' }, quick, h('button', { type: 'button', class: 'btn primary', onclick: addQuick, 'aria-label': 'Add' }, icon('plus'))) : null,
+      canEdit() ? h('div', { class: 'quick-add' }, quick, micButton(voiceAdd, { label: list && list.kind === 'shopping' ? 'Say items to add' : 'Say a task', hint: list && list.kind === 'shopping' ? 'Say the items, like “milk, eggs and bread”. Tap to stop.' : 'Say the task, like “Call the plumber”. Tap to stop.' }), h('button', { type: 'button', class: 'btn primary', onclick: addQuick, 'aria-label': 'Add' }, icon('plus'))) : null,
       open.length ? h('ul', { class: 'list', style: { marginTop: '8px' } }, open.map((t) => taskRow(t))) : h('div', { class: 'empty' }, 'Nothing here yet.'),
       done.length ? [h('div', { class: 'section-title' }, 'Done'), h('ul', { class: 'list' }, done.map((t) => taskRow(t)))] : null) : null,
     canEdit() ? h('button', { type: 'button', class: 'btn block', onclick: () => openTaskEditor({ listId: currentList }) }, 'Add with details (due date, person, reminder)') : null);
@@ -238,8 +257,12 @@ export function PeopleView(rerender) {
         h('div', { class: 'card' }, h('ul', { class: 'list' }, people.map((p) => h('li', null, h('div', { class: 'item' },
           member(p.member_id) ? avatarEl(member(p.member_id)) : h('span', { class: 'avatar', '--c': 'var(--ink-3)' }, initials(p.name)),
           h('span', { class: 'grow' }, h('div', { class: 'title' }, p.name, p.id === state.me.user.id ? ' (you)' : ''), h('div', { class: 'meta' }, [roleName[p.role], p.email, member(p.member_id) ? `profile: ${member(p.member_id).name}` : null].filter(Boolean).join(' · '))),
+          p.id !== state.me.user.id ? h('button', { type: 'button', class: 'btn ghost sm', onclick: () => sendAppLink(p) }, icon('share'), 'Send link') : null,
           isOwner() ? h('button', { type: 'button', class: 'btn ghost sm', onclick: () => personEditor(p, rerender) }, 'Edit') :
             p.id === state.me.user.id ? h('button', { type: 'button', class: 'btn ghost sm', onclick: () => leave(p) }, 'Leave') : null))))),
+        h('div', { class: 'card' }, h('h2', null, 'Lost the link?'),
+          h('p', { class: 'muted small', style: { marginTop: 0 } }, 'People who already joined just need the app’s address and their own email and password. Tap “Send link” next to them, or share it here.'),
+          h('button', { type: 'button', class: 'btn block', onclick: () => sendAppLink(null) }, icon('share'), 'Share the Family Flow link')),
         isOwner() ? h('div', { class: 'card' }, h('h2', null, 'Invite someone'),
           h('p', { class: 'muted small', style: { marginTop: 0 } }, 'Creates a one-time link that works for 7 days. Send it however you like (text, email).'),
           h('div', { class: 'two' },
@@ -249,6 +272,27 @@ export function PeopleView(rerender) {
   })();
   return root;
 }
+// For people who already have an account: the app's address plus how to sign in and install it.
+function sendAppLink(p) {
+  const url = `${location.origin}/`;
+  const first = p ? String(p.name || '').split(' ')[0] : '';
+  const text = [
+    `${first ? `Hi ${first}! ` : ''}Here’s our Family Flow: ${url}`,
+    p && p.email ? `Sign in with ${p.email} and your password.` : 'Sign in with your email and password.',
+    'On iPhone: open it in Safari, tap Share → Add to Home Screen, then open it from the icon to turn on notifications.',
+  ].join('\n');
+  sheet({
+    title: p ? `Send ${first || 'them'} the link` : 'Family Flow link',
+    body: h('div', { class: 'stack', style: { padding: '8px 0' } },
+      h('p', { class: 'muted' }, p ? `${first || 'They'} already ${p.name ? 'has' : 'have'} an account, so no new invitation is needed — just the app’s address.` : 'Share this with anyone in the family who already has an account.'),
+      h('code', { class: 'copy', style: { whiteSpace: 'pre-wrap' } }, text),
+      h('div', { class: 'two' },
+        h('button', { type: 'button', class: 'btn', onclick: () => copyText(text) }, icon('copy'), 'Copy'),
+        navigator.share ? h('button', { type: 'button', class: 'btn primary', onclick: () => navigator.share({ title: 'Family Flow', text, url }).catch(() => {}) }, icon('share'), 'Share') : null),
+      h('p', { class: 'faint small', style: { margin: 0 } }, 'Forgot the password? Password reset by email isn’t set up yet — the owner can remove them and send a new invitation.')),
+  });
+}
+
 async function invite(role) {
   try {
     const r = await api('POST', '/api/invites', { role });

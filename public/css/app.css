@@ -317,3 +317,8 @@ code.copy { display: block; background: var(--surface-2); padding: 10px 12px; bo
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 .btn svg, .banner svg, .row > svg, .place-chip > svg, .item > svg { width: 20px; height: 20px; flex: none; }
 .place-chip > svg { color: var(--accent); }
+
+.with-mic { display: flex; gap: 8px; align-items: center; }
+.with-mic .input { flex: 1; min-width: 0; }
+.mic-btn { flex: none; width: 46px; min-height: 46px; padding: 0; justify-content: center; border-radius: 50%; }
+.quick-add .mic-btn { border-radius: 12px; }

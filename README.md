@@ -24,6 +24,8 @@ A shared family calendar, task lists and AI assistant. Mobile-first web app (ins
 | Family updates | Inbox + push alert to everyone else who can see it when an event is added, moved/renamed/relocated, or cancelled, and to the assignee when a task is assigned. Notes-only edits and private events stay silent. Each person can turn these off (More → Notifications). | `test/groups.test.js` |
 | Icons & avatars | Events show an icon suggested from the title (⚽ soccer, 🦷 dentist, 🎂 birthday…), which you can change or turn off. Profiles can have a photo (cropped and shrunk on the phone, stored ≤ ~100 KB) or an emoji avatar. Shopping-list items have a "Buy on Amazon" link (opens an Amazon search). | `test/groups.test.js`, browser check |
 | Holidays | US federal holidays (plus the weekday off when one falls on a weekend) and popular observances (Mother’s Day, Halloween…) appear on the calendar automatically for US time zones. Calculated on the device, read-only. More → Household: Automatic / United States / Off. | `test/holidays.test.js` |
+| Voice for tasks | Mic button on the task form, the event title and every list's add box. On shopping lists, saying “milk, eggs and bread” adds three items at once; on to-do lists the words go into the box to check first. | browser check with `MOCK_VOICE` |
+| Resend app link | People & invites → “Send link” gives someone who already joined the app address, their sign-in email and iPhone install steps (copy or share). | browser check |
 | Diagnostics | Owner-only page of live checks: database write/read, schema, cron heartbeat, overdue reminders, push, backups, Geoapify, Photon, Claude API key + model, Workers AI. A check is only green if it actually ran and passed. | `test/ops.test.js` |
 
 ## Not done yet (honest list)
@@ -58,7 +60,7 @@ Requires Node 22+. No npm packages needed.
 
 ```sh
 npm test                                   # 30 server tests (node:test, SQLite stand-in for D1)
-MOCK_AI=1 MOCK_PLACES=1 node scripts/dev-server.js 8787 /tmp/dev.sqlite
+MOCK_AI=1 MOCK_PLACES=1 MOCK_VOICE="milk, eggs and bread" node scripts/dev-server.js 8787 /tmp/dev.sqlite
 node e2e/smoke.mjs http://localhost:8787   # browser test (needs Playwright installed)
 ```
 

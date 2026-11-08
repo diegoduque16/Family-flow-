@@ -1,6 +1,7 @@
 // Event + task editors, event details, and the address autocomplete field.
 import { h, icon, sheet, toast, choose, confirmDialog, fmtDay, fmtRange, fmtTime, reminderLabel, debounce, addDaysStr, avatarEl } from './ui.js';
 import { suggestIcon, eventIcon, ICON_CHOICES } from './icons.js';
+import { micButton, cleanTitle } from './voice.js';
 import { api, state, mutate, membersList, listsList, member, tz, todayStr, nowLocal, localEventRow, groupsList, groupName } from './store.js';
 import { parseRrule, buildRrule } from './time.js';
 
@@ -302,7 +303,7 @@ export function openEventEditor(opts = {}) {
     title: isProposal ? 'Review event' : ev ? 'Edit event' : 'New event',
     full: true,
     body: h('form', { onsubmit: (e) => { e.preventDefault(); save(); }, novalidate: true },
-      field('Title', h('div', null, title, titleErr)),
+      field('Title', h('div', null, h('div', { class: 'with-mic' }, title, micButton((text) => { title.value = cleanTitle(text); title.dispatchEvent(new Event('input')); title.focus(); }, { label: 'Say the event name', hint: 'Say the event name, like “Soccer practice”. Tap to stop.' })), titleErr)),
       h('div', { class: 'field' }, h('span', { class: 'label' }, 'Icon'), h('div', { class: 'row', style: { gap: '10px' } }, iconPreview, iconNote, iconToggle), iconGrid),
       h('label', { class: 'switch field' }, h('span', { style: { fontWeight: 650 } }, 'All day'), allDayT),
       h('div', { class: 'field' }, h('span', { class: 'label' }, 'Starts'), h('div', { class: 'two' }, sDate, sTime)),
@@ -478,7 +479,7 @@ export function openTaskEditor(opts = {}) {
   const s = sheet({
     title: isProposal ? 'Review task' : t ? 'Edit task' : 'New task', full: true,
     body: h('form', { onsubmit: (e) => { e.preventDefault(); save(); }, novalidate: true },
-      field('Task', title), field('List', listSel),
+      field('Task', h('div', { class: 'with-mic' }, title, micButton((text) => { title.value = cleanTitle(text); title.focus(); }, { label: 'Say the task', hint: 'Say the task, like “Pack swim bag”. Tap to stop.' }))), field('List', listSel),
       h('div', { class: 'field' }, h('span', { class: 'label' }, 'Due (optional)'), h('div', { class: 'two' }, dDate, dTime)),
       h('div', { class: 'field' }, h('span', { class: 'label' }, 'For'), who.el),
       field('Repeats', repeat, 'When ticked off, a repeating task moves to its next due date.'),

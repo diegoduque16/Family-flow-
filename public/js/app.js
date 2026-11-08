@@ -4,6 +4,7 @@ import { api, state, on, sync, loadCached, startAutoSync, refreshCounts, clearLo
 import { TodayView, CalendarView, InboxView, AssistantView, assistantDraft } from './views.js';
 import { MoreView, TasksView, FamilyView, GroupsView, PeopleView, PlacesView, SyncView, NotificationsView, HouseholdView, DataView, DiagnosticsView, AccountView } from './more.js';
 import { openEventEditor, openTaskEditor, openEventDetail, errorText } from './editors.js';
+import { recordVoice } from './voice.js';
 
 const app = document.getElementById('app');
 const TABS = [
@@ -156,46 +157,11 @@ function addMenu() {
 // ---------- voice capture ----------
 // Records up to 60s, transcribes on the server, then puts the text in the assistant box so it can be checked before sending.
 async function startRecording() {
-  if (!state.me.features.voice) { toast('Voice isn’t available on this server yet. You can type instead.'); return; }
-  if (!navigator.mediaDevices || !window.MediaRecorder) { toast('This browser can’t record audio. You can type instead.'); return; }
-  let stream;
-  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch {
-    toast('Microphone access was blocked. Allow it in your browser settings, or type instead.', { bad: true }); return;
-  }
-  const mime = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm', 'audio/ogg'].find((m) => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || '';
-  const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
-  const chunks = [];
-  rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
-  let cancelled = false;
-  const t0 = Date.now();
-  const timeEl = h('div', { class: 'time' }, '0:00');
-  const tick = setInterval(() => { const s = Math.floor((Date.now() - t0) / 1000); timeEl.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; if (s >= 60) stop(); }, 250);
-  const stop = () => { if (rec.state !== 'inactive') rec.stop(); };
-  const sh = sheet({
-    title: 'Listening…',
-    body: h('div', { class: 'rec' }, h('button', { type: 'button', class: 'pulse', style: { border: 0 }, 'aria-label': 'Stop recording', onclick: stop }, icon('stop')), timeEl,
-      h('p', { class: 'muted small', style: { textAlign: 'center', margin: 0 } }, 'Say something like “Swim lessons for Kiddo 1 every Saturday at 10”. Tap to stop.')),
-    onClose: () => { if (rec.state !== 'inactive') { cancelled = true; rec.stop(); } },
-  });
-  rec.onstop = async () => {
-    clearInterval(tick);
-    stream.getTracks().forEach((t) => t.stop());
-    if (cancelled) return;
-    sh.setBody(h('div', { class: 'rec' }, h('p', null, 'Transcribing…')));
-    try {
-      const blob = new Blob(chunks, { type: rec.mimeType || mime || 'audio/webm' });
-      if (blob.size < 1000) throw new Error('That was too short. Hold on a moment longer and try again.');
-      const r = await api('POST', '/api/transcribe', blob);
-      sh.close();
-      if (!r.text) { toast('I didn’t catch anything. Try again a little closer to the mic.'); return; }
-      assistantDraft.text = r.text;
-      if (location.hash === '#/assistant') render(); else location.hash = '#/assistant';
-      toast('Check the text, then tap send.');
-    } catch (e) {
-      sh.setBody(h('div', { class: 'stack', style: { padding: '12px 0' } }, h('div', { class: 'banner bad' }, errorText(e)), h('button', { type: 'button', class: 'btn primary block', onclick: () => { sh.close(); startRecording(); } }, 'Try again')));
-    }
-  };
-  rec.start(250);
+  const text = await recordVoice({ hint: 'Say something like “Swim lessons for Kiddo 1 every Saturday at 10”. Tap to stop.' });
+  if (!text) return;
+  assistantDraft.text = text;
+  if (location.hash === '#/assistant') render(); else location.hash = '#/assistant';
+  toast('Check the text, then tap send.');
 }
 
 // ---------- boot ----------

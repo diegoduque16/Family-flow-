@@ -69,6 +69,9 @@ if (process.env.MOCK_AI) {
   void prev;
 }
 
+// Fake speech-to-text for browser tests: MOCK_VOICE="milk, eggs and bread" makes every recording transcribe to that text.
+if (process.env.MOCK_VOICE) env.AI = { run: async () => ({ text: process.env.MOCK_VOICE }) };
+
 // Canned Google/Outlook feeds for the browser test (any calendar.google.com/calendar/ical/... or outlook.office365.com/owa/calendar/... link)
 if (process.env.MOCK_CAL) {
   const inner = env.__fetch || fetch;
