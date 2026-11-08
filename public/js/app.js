@@ -238,6 +238,19 @@ document.addEventListener('focusout', flushPending);
 window.addEventListener('hashchange', () => { closeAllSheets(); if (state.me) render(); else boot(); });
 
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js').catch((e) => console.warn('Service worker failed to register', e));
+  // When a new version of the app is deployed, the new service worker takes over; reload once so the new screens appear
+  // (or offer a Reload button if the person is in the middle of typing something).
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloading) return;
+    reloading = true;
+    if (!isBusy()) location.reload();
+    else toast('A new version of Family Flow is ready.', { action: 'Reload', onAction: () => location.reload(), ms: 15000 });
+  });
+  navigator.serviceWorker.register('/sw.js').then((reg) => {
+    reg.update().catch(() => {});
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+  }).catch((e) => console.warn('Service worker failed to register', e));
 }
 boot();
