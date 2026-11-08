@@ -44,7 +44,7 @@ export async function rateLimit(db, key, limit, windowSec) {
 }
 
 // Daily per-household usage caps for paid APIs (AI, transcription, geocoding).
-export const DAILY_CAPS = { assistant: 150, transcribe: 100, geocode: 1500 };
+export const DAILY_CAPS = { assistant: 150, transcribe: 100, geocode: 1500, import: 20 };
 
 export async function useQuota(db, householdId, kind, env) {
   const cap = Number(env && env[`CAP_${kind.toUpperCase()}`]) || DAILY_CAPS[kind];

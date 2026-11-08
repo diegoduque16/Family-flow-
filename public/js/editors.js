@@ -1,5 +1,5 @@
 // Event + task editors, event details, and the address autocomplete field.
-import { h, icon, sheet, toast, choose, confirmDialog, fmtDay, fmtRange, fmtTime, reminderLabel, debounce, addDaysStr, avatarEl } from './ui.js';
+import { h, icon, sheet, toast, choose, confirmDialog, fmtDay, fmtDayShort, fmtRange, fmtTime, reminderLabel, debounce, addDaysStr, avatarEl } from './ui.js';
 import { suggestIcon, eventIcon, ICON_CHOICES } from './icons.js';
 import { micButton, cleanTitle } from './voice.js';
 import { api, state, mutate, membersList, listsList, member, tz, todayStr, nowLocal, localEventRow, groupsList, groupName, sync } from './store.js';
@@ -567,5 +567,107 @@ export async function openWhoAmI(onDone) {
       }))),
       h('button', { type: 'button', class: 'btn block', style: { marginTop: '10px' }, onclick: () => pick({ createNamed: first }, `Added you as ${first}`) }, icon('plus'), `I’m not listed — add “${first}”`),
       err),
+  });
+}
+
+// ---------- import from a PDF or photo ----------
+// Photos are converted to a reasonably sized JPEG on the device (also handles iPhone HEIC photos).
+async function prepareUpload(file) {
+  if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) return new Blob([file], { type: 'application/pdf' });
+  if (!/^image\//.test(file.type || 'image/')) throw new Error('Choose a PDF or a photo of the schedule.');
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('Could not open that picture. Try a PDF, JPEG or PNG.')); i.src = url; });
+    const scale = Math.min(1, 2200 / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement('canvas');
+    c.width = Math.round(img.naturalWidth * scale); c.height = Math.round(img.naturalHeight * scale);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    return await new Promise((res) => c.toBlob((b) => res(b), 'image/jpeg', 0.85));
+  } finally { URL.revokeObjectURL(url); }
+}
+
+export function openImportDocument() {
+  if (!state.me.features.assistant) { toast('Importing needs the assistant, which isn’t switched on for this app yet.', { bad: true }); return; }
+  const input = h('input', { type: 'file', accept: 'application/pdf,image/*', hidden: true });
+  document.body.append(input);
+  input.addEventListener('change', async () => {
+    const file = input.files && input.files[0];
+    input.remove();
+    if (!file) return;
+    const s = sheet({ title: 'Reading your file…', body: h('div', { class: 'rec' }, h('div', { class: 'pulse', style: { background: 'var(--accent)' } }, icon('event')),
+      h('p', null, `Finding the dates in “${file.name}”`), h('p', { class: 'muted small', style: { textAlign: 'center', margin: 0 } }, 'Long calendars can take up to a minute.')) });
+    try {
+      const blob = await prepareUpload(file);
+      const res = await api('POST', '/api/import/document', blob, { headers: { 'x-file-name': encodeURIComponent(file.name) } });
+      s.close();
+      if (!res.events.length) { toast('I couldn’t find any dates in that file.', { bad: true }); return; }
+      reviewImport(res);
+    } catch (e) { s.setBody(h('div', { class: 'stack', style: { padding: '12px 0' } }, h('div', { class: 'banner bad' }, errorText(e)), h('button', { type: 'button', class: 'btn block', onclick: () => s.close() }, 'Close'))); }
+  });
+  input.click();
+}
+
+function whenLabel(e) {
+  if (e.allDay) {
+    const last = addDaysStr(e.end, -1);
+    return last > e.start ? `${fmtDayShort(e.start)} – ${fmtDayShort(last)}` : `${fmtDayShort(e.start)} · all day`;
+  }
+  return `${fmtDayShort(e.start)} · ${fmtTime(e.start)}${e.end ? `–${fmtTime(e.end)}` : ''}`;
+}
+
+function reviewImport(res) {
+  const rows = res.events.map((e) => ({ e, on: !e.exists, title: h('input', { class: 'input', value: e.title, maxlength: 200, 'aria-label': 'Title', style: { padding: '6px 10px', minHeight: '36px' } }) }));
+  const who = memberPicker([]);
+  const share = h('select', { class: 'input', 'aria-label': 'Share with' }, h('option', { value: '' }, 'Everyone'), groupsList().map((g) => h('option', { value: g.id }, `${g.name} only`)), h('option', { value: '__private' }, 'Only me'));
+  const rem = h('select', { class: 'input', 'aria-label': 'Reminder' }, h('option', { value: '' }, 'No reminder'), h('option', { value: '1440' }, '1 day before'), h('option', { value: '60' }, '1 hour before'));
+  const addBtn = h('button', { type: 'button', class: 'btn primary' });
+  const err = h('div');
+  const countOn = () => rows.filter((r) => r.on).length;
+  const renderBtn = () => { const n = countOn(); addBtn.textContent = n ? `Add ${n} event${n > 1 ? 's' : ''}` : 'Nothing selected'; addBtn.disabled = !n; };
+  const list = h('ul', { class: 'list' }, rows.map((r) => {
+    const cb = h('input', { type: 'checkbox', checked: r.on, 'aria-label': `Add ${r.e.title}`, style: { width: '22px', height: '22px', flex: 'none', marginTop: '8px' } });
+    cb.addEventListener('change', () => { r.on = cb.checked; renderBtn(); });
+    const ic = eventIcon({ title: r.e.title });
+    return h('li', { style: { display: 'flex', gap: '10px', alignItems: 'flex-start', padding: '8px 0' } }, cb,
+      h('div', { class: 'grow', style: { minWidth: 0 } },
+        h('div', { class: 'row', style: { gap: '6px' } }, ic ? h('span', { 'aria-hidden': 'true' }, ic) : null, r.title),
+        h('div', { class: 'meta small', style: { marginTop: '4px' } }, whenLabel(r.e), r.e.location ? ` · ${r.e.location.name}` : '',
+          r.e.assignees.length ? ` · ${r.e.assignees.map((id) => (member(id) || {}).name).filter(Boolean).join(', ')}` : ''),
+        r.e.notes ? h('div', { class: 'faint small' }, r.e.notes) : null,
+        r.e.exists ? h('div', { class: 'small', style: { color: 'var(--warn)' } }, 'Already on your calendar') : null));
+  }));
+  const toggleAll = h('button', { type: 'button', class: 'btn ghost sm', onclick: () => {
+    const all = countOn() < rows.length;
+    rows.forEach((r) => { r.on = all; });
+    list.querySelectorAll('input[type=checkbox]').forEach((c) => { c.checked = all; });
+    renderBtn();
+  } }, 'Select all / none');
+  renderBtn();
+  const s = sheet({
+    title: `Found ${rows.length} entr${rows.length === 1 ? 'y' : 'ies'}`, full: true,
+    body: h('div', null,
+      res.summary ? h('p', { class: 'muted', style: { marginTop: 0 } }, res.summary) : null,
+      h('div', { class: 'card', style: { padding: '12px' } },
+        h('div', { class: 'field' }, h('span', { class: 'label' }, 'For (when the file doesn’t say)'), who.el),
+        h('div', { class: 'two' }, h('label', { class: 'field', style: { margin: 0 } }, h('span', { class: 'label' }, 'Share with'), share), h('label', { class: 'field', style: { margin: 0 } }, h('span', { class: 'label' }, 'Reminder'), rem))),
+      h('div', { class: 'row', style: { justifyContent: 'space-between', margin: '10px 0 0' } }, h('span', { class: 'muted small' }, 'Check the dates, untick anything you don’t want, and fix titles if needed.'), toggleAll),
+      list, err),
+    foot: [h('button', { type: 'button', class: 'btn', onclick: () => s.close() }, 'Cancel'), addBtn],
+  });
+  addBtn.addEventListener('click', async () => {
+    addBtn.disabled = true;
+    err.replaceChildren();
+    const priv = share.value === '__private';
+    const events = rows.filter((r) => r.on).map(({ e, title }) => ({
+      title: title.value.trim() || e.title, start: e.start, ...(e.end ? { end: e.end } : {}), allDay: e.allDay, location: e.location, notes: e.notes,
+      assignees: e.assignees.length ? e.assignees : who.value, visibility: priv ? 'private' : 'shared', groupId: !priv && share.value ? share.value : null,
+      reminders: rem.value ? [Number(rem.value)] : [],
+    }));
+    try {
+      const r = await api('POST', '/api/events/bulk', { events, source: res.fileName || 'a file' });
+      await sync();
+      if (r.failed.length) err.replaceChildren(h('div', { class: 'banner warn' }, `Added ${r.created.length}. Couldn’t add: ${r.failed.map((f) => `${f.title || 'untitled'} (${f.error})`).join('; ')}`));
+      else { s.close(); toast(`Added ${r.created.length} event${r.created.length > 1 ? 's' : ''} to the calendar`); }
+    } catch (e) { err.replaceChildren(h('div', { class: 'banner bad' }, errorText(e))); renderBtn(); }
   });
 }

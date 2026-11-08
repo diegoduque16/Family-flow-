@@ -76,7 +76,7 @@ export function client(env, origin = 'https://ff.test') {
     const headers = { 'x-ff': '1', ...extraHeaders };
     if (cookie) headers.cookie = cookie;
     let payload;
-    if (body instanceof Uint8Array) { payload = body; headers['content-type'] = 'audio/webm'; }
+    if (body instanceof Uint8Array) { payload = body; headers['content-type'] = headers['content-type'] || 'audio/webm'; }
     else if (body !== undefined) { payload = JSON.stringify(body); headers['content-type'] = 'application/json'; }
     const res = await handle(new Request(origin + path, { method, headers, body: payload }), env);
     const set = res.headers.get('set-cookie');

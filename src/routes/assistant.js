@@ -104,7 +104,7 @@ How to work:
 - Keep replies brief and friendly; you may be read aloud.`;
 }
 
-async function callClaude(env, body) {
+export async function callClaude(env, body, { timeoutMs = 45000 } = {}) {
   const f = env.__fetch || fetch;
   const models = [env.ANTHROPIC_MODEL || DEFAULT_MODEL, ...FALLBACK_MODELS];
   let lastErr = null;
@@ -113,7 +113,7 @@ async function callClaude(env, body) {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({ ...body, model }),
-      signal: AbortSignal.timeout(45000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (res.ok) return res.json();
     const text = await res.text();
@@ -126,7 +126,7 @@ async function callClaude(env, body) {
 }
 
 // Map names ("dad", "kiddo 1") to member ids.
-function resolveMembers(names, members) {
+export function resolveMembers(names, members) {
   const ids = [];
   const unknown = [];
   for (const n of names || []) {

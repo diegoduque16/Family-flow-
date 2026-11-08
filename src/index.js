@@ -3,6 +3,7 @@ import { HttpError, json, errorResponse } from './lib/util.js';
 import { loadContext, checkCsrf } from './lib/auth.js';
 import { ensureSchema } from './lib/schema.js';
 import * as groups from './routes/groups.js';
+import * as importdoc from './routes/importdoc.js';
 import * as account from './routes/account.js';
 import * as cal from './routes/calendar.js';
 import * as places from './routes/places.js';
@@ -43,6 +44,8 @@ const ROUTES = [
   ['GET', '/api/events', cal.listEvents, 'household'],
   ['POST', '/api/events', cal.createEvent, 'household'],
   ['POST', '/api/events/conflicts', cal.checkConflicts, 'household'],
+  ['POST', '/api/events/bulk', importdoc.bulkCreateEvents, 'household'],
+  ['POST', '/api/import/document', importdoc.extractFromDocument, 'household'],
   ['GET', '/api/events/:id', cal.getEvent, 'household'],
   ['PATCH', '/api/events/:id', cal.updateEvent, 'household'],
   ['DELETE', '/api/events/:id', cal.deleteEvent, 'household'],

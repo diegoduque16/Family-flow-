@@ -3,7 +3,7 @@ import { h, icon, toast, sheet, closeAllSheets, labelInput } from './ui.js';
 import { api, state, on, sync, loadCached, startAutoSync, refreshCounts, clearLocalData, resetState } from './store.js';
 import { TodayView, CalendarView, InboxView, AssistantView, assistantDraft } from './views.js';
 import { MoreView, TasksView, FamilyView, GroupsView, PeopleView, PlacesView, SyncView, NotificationsView, HouseholdView, DataView, DiagnosticsView, AccountView } from './more.js';
-import { openEventEditor, openTaskEditor, openEventDetail, errorText } from './editors.js';
+import { openEventEditor, openTaskEditor, openEventDetail, errorText, openImportDocument } from './editors.js';
 import { recordVoice } from './voice.js';
 
 const app = document.getElementById('app');
@@ -152,7 +152,8 @@ function addMenu() {
     body: h('div', { class: 'menu-grid' },
       h('button', { type: 'button', class: 'menu-tile', onclick: () => { s.close(); openEventEditor({}); } }, icon('event'), 'Event'),
       h('button', { type: 'button', class: 'menu-tile', onclick: () => { s.close(); openTaskEditor({}); } }, icon('task'), 'Task'),
-      h('button', { type: 'button', class: 'menu-tile', onclick: () => { s.close(); location.hash = '#/assistant'; } }, icon('assistant'), 'Ask assistant')),
+      h('button', { type: 'button', class: 'menu-tile', onclick: () => { s.close(); location.hash = '#/assistant'; } }, icon('assistant'), 'Ask assistant'),
+      h('button', { type: 'button', class: 'menu-tile', onclick: () => { s.close(); openImportDocument(); } }, icon('download'), 'From a PDF or photo')),
   });
 }
 

@@ -53,6 +53,14 @@ if (process.env.MOCK_AI) {
   env.__aiFetch = async (url, init) => {
     if (String(url) !== 'https://api.anthropic.com/v1/messages') return fetch(url, init);
     const body = JSON.parse(init.body);
+    if (body.tool_choice && body.tool_choice.name === 'extract_events') {
+      const y = new Date().getUTCFullYear() + (new Date().getUTCMonth() > 9 ? 1 : 0);
+      return Response.json({ stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'x1', name: 'extract_events', input: { summary: 'Spring soccer schedule for the Tigers (3 games and a tournament).', events: [
+        { title: 'Soccer game vs Eagles', date: `${y}-03-14`, start_time: '09:00', end_time: '10:30', location: 'Riverside Park Field 2', who: 'Kiddo' },
+        { title: 'Soccer game vs Hawks', date: `${y}-03-21`, start_time: '10:00', end_time: '11:30', location: 'Riverside Park Field 1' },
+        { title: 'Picture day', date: `${y}-03-28`, notes: 'Wear the white jersey' },
+        { title: 'Spring tournament', date: `${y}-04-04`, end_date: `${y}-04-05` } ] } }] });
+    }
     const last = body.messages[body.messages.length - 1];
     if (last.content.some && last.content.some((b) => b.type === 'tool_result')) {
       return Response.json({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'I’ve prepared that for you. Check it and tap Confirm.' }] });
