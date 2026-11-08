@@ -4,7 +4,7 @@ import { AVATAR_CHOICES } from './icons.js';
 import { HOLIDAY_REGIONS, isUsZone } from './holidays.js';
 import { micButton, splitItems, cleanTitle } from './voice.js';
 import { api, state, mutate, membersList, listsList, member, sync, clearLocalData, emit, groupsList, myGroups, groupName } from './store.js';
-import { openTaskEditor, placeInput, canEdit, errorText, providerName } from './editors.js';
+import { openTaskEditor, placeInput, canEdit, errorText, providerName, openWhoAmI } from './editors.js';
 import { taskRow } from './views.js';
 
 const COLORS = ['#E76F51', '#2A9D8F', '#E9A23B', '#7C6CF2', '#D9487D', '#3A86FF', '#6A994E', '#8D6E63', '#F4A261', '#264653', '#9B5DE5', '#00A6A6'];
@@ -109,15 +109,19 @@ function listEditor(l, rerender) {
 }
 
 // ---------- family profiles ----------
+let peopleCache = null;
 export function FamilyView(rerender) {
+  if (!peopleCache) api('GET', '/api/household/people').then(({ people }) => { peopleCache = people; rerender(); }).catch(() => {});
+  const loginOf = (m) => (peopleCache || []).find((p) => p.member_id === m.id);
   return h('div', { class: 'page' }, back('Family profiles'),
     h('p', { class: 'muted' }, 'Profiles are who events and tasks are for. Add a photo or an avatar so everyone is easy to spot. Profiles don’t need their own login — invite people separately if they should sign in.'),
     h('div', { class: 'card' }, h('ul', { class: 'list' }, membersList().map((m) => h('li', null,
       h('button', { type: 'button', class: 'item', onclick: () => memberEditor(m, rerender), disabled: !canEdit() },
         avatarEl(m, { size: 40 }),
-        h('span', { class: 'grow' }, h('div', { class: 'title' }, m.name), h('div', { class: 'meta' }, [m.kind === 'child' ? 'Child' : 'Adult', ...groupsList().filter((g) => g.memberIds.includes(m.id)).map((g) => g.name)].join(' · '))),
+        h('span', { class: 'grow' }, h('div', { class: 'title' }, m.name, loginOf(m) ? h('span', { class: 'faint' }, ` · ${loginOf(m).id === state.me.user.id ? 'you' : loginOf(m).name.split(' ')[0]}`) : null), h('div', { class: 'meta' }, [m.kind === 'child' ? 'Child' : 'Adult', ...groupsList().filter((g) => g.memberIds.includes(m.id)).map((g) => g.name)].join(' · '))),
         canEdit() ? icon('chev', 'chev') : null))))),
-    canEdit() ? h('button', { type: 'button', class: 'btn block primary', onclick: () => memberEditor(null, rerender) }, icon('plus'), 'Add a profile') : null);
+    canEdit() ? h('button', { type: 'button', class: 'btn block primary', onclick: () => memberEditor(null, rerender) }, icon('plus'), 'Add a profile') : null,
+    h('button', { type: 'button', class: 'btn block', onclick: () => openWhoAmI(() => { peopleCache = null; rerender(); }) }, 'Which profile is me?'));
 }
 function memberEditor(m, rerender) {
   const name = h('input', { class: 'input', value: m ? m.name : '', maxlength: 40, autofocus: true, placeholder: 'e.g. Grandma' });
@@ -256,7 +260,8 @@ export function PeopleView(rerender) {
         h('p', { class: 'muted' }, 'Owners manage the household. Adults can add and edit everything. Children can see shared events and tick off tasks.'),
         h('div', { class: 'card' }, h('ul', { class: 'list' }, people.map((p) => h('li', null, h('div', { class: 'item' },
           member(p.member_id) ? avatarEl(member(p.member_id)) : h('span', { class: 'avatar', '--c': 'var(--ink-3)' }, initials(p.name)),
-          h('span', { class: 'grow' }, h('div', { class: 'title' }, p.name, p.id === state.me.user.id ? ' (you)' : ''), h('div', { class: 'meta' }, [roleName[p.role], p.email, member(p.member_id) ? `profile: ${member(p.member_id).name}` : null].filter(Boolean).join(' · '))),
+          h('span', { class: 'grow' }, h('div', { class: 'title' }, p.name, p.id === state.me.user.id ? ' (you)' : '', member(p.member_id) ? h('span', { class: 'faint' }, ` = ${member(p.member_id).name}`) : null), h('div', { class: 'meta' }, [roleName[p.role], p.email, member(p.member_id) ? null : 'no profile linked'].filter(Boolean).join(' · '))),
+          p.id === state.me.user.id ? h('button', { type: 'button', class: 'btn ghost sm', onclick: () => openWhoAmI(rerender) }, 'This is me…') : null,
           p.id !== state.me.user.id ? h('button', { type: 'button', class: 'btn ghost sm', onclick: () => sendAppLink(p) }, icon('share'), 'Send link') : null,
           isOwner() ? h('button', { type: 'button', class: 'btn ghost sm', onclick: () => personEditor(p, rerender) }, 'Edit') :
             p.id === state.me.user.id ? h('button', { type: 'button', class: 'btn ghost sm', onclick: () => leave(p) }, 'Leave') : null))))),
@@ -306,12 +311,27 @@ function sendAppLink(p) {
 }
 
 async function invite(role) {
+  let people = [];
+  try { people = (await api('GET', '/api/household/people')).people; } catch { /* ignore */ }
+  const linked = new Set(people.map((p) => p.member_id).filter(Boolean));
+  const free = membersList().filter((m) => !linked.has(m.id) && (role === 'child' ? m.kind === 'child' : true));
+  const prof = h('select', { class: 'input' }, h('option', { value: '' }, 'Let them choose when they join'), free.map((m) => h('option', { value: m.id }, m.name)));
+  const s = sheet({
+    title: role === 'adult' ? 'Invite an adult' : 'Invite a child',
+    body: h('div', null, h('label', { class: 'field' }, h('span', { class: 'label' }, 'Who is this for?'), prof,
+      h('p', { class: 'hint' }, 'Pick their profile (e.g. Mom for Hayley) so they’re set up as soon as they join.'))),
+    foot: [h('button', { type: 'button', class: 'btn', onclick: () => s.close() }, 'Cancel'),
+      h('button', { type: 'button', class: 'btn primary', onclick: () => { s.close(); createInvite(role, prof.value || null); } }, 'Create link')],
+  });
+}
+async function createInvite(role, memberId) {
+  const who = memberId && member(memberId);
   try {
-    const r = await api('POST', '/api/invites', { role });
+    const r = await api('POST', '/api/invites', memberId ? { role, memberId } : { role });
     sheet({
       title: 'Invitation link',
       body: h('div', { class: 'stack', style: { padding: '8px 0' } },
-        h('p', { class: 'muted' }, `Anyone with this link can join ${state.household.name} as ${role === 'adult' ? 'an adult' : 'a child'}. It works once and expires in 7 days.`),
+        h('p', { class: 'muted' }, `Anyone with this link can join ${state.household.name} as ${role === 'adult' ? 'an adult' : 'a child'}${who ? ` — they’ll be ${who.name}` : ''}. It works once and expires in 7 days.`),
         h('code', { class: 'copy' }, r.url),
         sendButtons(`Join ${state.household.name} on Family Flow: ${r.url}\nOn iPhone: open it in Safari, create your account, then tap Share → Add to Home Screen.`, 'Join our family on Family Flow')),
     });
@@ -321,11 +341,12 @@ function personEditor(p, rerender) {
   const role = h('select', { class: 'input' }, h('option', { value: 'owner' }, 'Owner'), h('option', { value: 'adult' }, 'Adult'), h('option', { value: 'child' }, 'Child'));
   role.value = p.role;
   const prof = h('select', { class: 'input' }, h('option', { value: '' }, 'None'), membersList().map((m) => h('option', { value: m.id }, m.name)));
+  api('GET', '/api/household/people').then(({ people }) => { for (const o of prof.options) { const other = people.find((x) => x.member_id && x.member_id === o.value && x.id !== p.id); if (other) o.textContent = `${member(o.value).name} (now ${other.name}’s — will move)`; } }).catch(() => {});
   prof.value = p.member_id || '';
   const err = h('div');
   const s = sheet({
     title: p.name,
-    body: h('div', null, h('label', { class: 'field' }, h('span', { class: 'label' }, 'Role'), role), h('label', { class: 'field' }, h('span', { class: 'label' }, 'Their family profile'), prof), err),
+    body: h('div', null, h('label', { class: 'field' }, h('span', { class: 'label' }, 'Role'), role), h('label', { class: 'field' }, h('span', { class: 'label' }, 'Their family profile'), prof, h('p', { class: 'hint' }, 'Which profile is this person — e.g. Hayley is Mom. Each profile belongs to one login.')), err),
     foot: [
       h('button', { type: 'button', class: 'btn danger', onclick: async () => {
         if (!(await confirmDialog(p.id === state.me.user.id ? 'Leave household?' : `Remove ${p.name}?`, 'They will no longer be able to sign in to this household. Their events stay.', 'Remove', true))) return;

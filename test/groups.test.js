@@ -8,6 +8,7 @@ async function family() {
   const env = makeEnv();
   const mom = await signedUp(env, { name: 'Ana' });
   const [momP, dadP, k1] = mom.sync.members;
+  await mom.c.patch('/api/me/profile', { memberId: momP.id });
   const gma = (await mom.c.post('/api/members', { name: 'Grandma', color: '#8D6E63', kind: 'adult' })).data.member;
   const invDad = await mom.c.post('/api/invites', { role: 'adult', memberId: dadP.id });
   const dad = await signedUp(env, { name: 'Leo', inviteToken: invDad.data.token });
@@ -166,4 +167,34 @@ test('alerts use the suggested icon when none was picked, and none when turned o
   const a = await activity(f.mom);
   assert.ok(a.some((n) => n.title === 'Dad added “🦷 Dentist for Kiddo”'), JSON.stringify(a.map((n) => n.title)));
   assert.ok(a.some((n) => n.title === 'Dad added “Soccer”'));
+});
+
+test('profiles: creator picks who they are; one login per profile; invites can pre-assign a profile', async () => {
+  const env = makeEnv();
+  const a = await signedUp(env, { name: 'Diego Duque' });
+  assert.equal(a.me.memberId, null, 'the creator is not assumed to be Mom');
+  const [mom, dad] = a.sync.members;
+  assert.equal((await a.c.patch('/api/me/profile', { memberId: dad.id })).status, 200);
+  assert.equal((await a.c.get('/api/me')).data.memberId, dad.id);
+  // invitation for Mom's profile
+  const inv = await a.c.post('/api/invites', { role: 'adult', memberId: mom.id });
+  const h = await signedUp(env, { name: 'Hayley', inviteToken: inv.data.token });
+  assert.equal(h.me.memberId, mom.id);
+  // Hayley (not owner) can't take Dad's profile
+  const taken = await h.c.patch('/api/me/profile', { memberId: dad.id });
+  assert.equal(taken.status, 409);
+  assert.match(taken.data.error.message, /already Diego/);
+  // "I'm not listed": creates a profile with your name
+  const k = await signedUp(env, { name: 'Leo', inviteToken: (await a.c.post('/api/invites', { role: 'adult' })).data.token });
+  assert.equal(k.me.memberId, null);
+  const made = await k.c.patch('/api/me/profile', { createNamed: 'Uncle Leo' });
+  assert.equal(made.status, 200);
+  const s = (await k.c.get('/api/sync')).data;
+  assert.ok(s.members.find((m) => m.id === made.data.memberId && m.name === 'Uncle Leo'));
+  // owner moving a profile to someone else unlinks the previous person
+  const people = (await a.c.get('/api/household/people')).data.people;
+  const hay = people.find((p) => p.name === 'Hayley');
+  await a.c.patch(`/api/household/people/${hay.id}`, { memberId: dad.id });
+  assert.equal((await a.c.get('/api/me')).data.memberId, null);
+  assert.equal((await h.c.get('/api/me')).data.memberId, dad.id);
 });

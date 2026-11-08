@@ -19,6 +19,7 @@ const ROUTES = [
   ['GET', '/api/me', account.me, 'session'],
   ['POST', '/api/me/password', account.changePassword, 'session'],
   ['PATCH', '/api/me/prefs', account.updatePrefs, 'household'],
+  ['PATCH', '/api/me/profile', account.linkMyProfile, 'household'],
   ['DELETE', '/api/me', account.deleteAccount, 'session'],
   ['POST', '/api/households', account.newHousehold, 'session'],
   ['POST', '/api/households/switch', account.switchHousehold, 'session'],

@@ -1,7 +1,7 @@
 // Main screens: Today, Calendar, Inbox, Assistant.
 import { h, icon, toast, fmtDay, fmtDayShort, fmtMonth, fmtTime, fmtRange, fmtWeekday, relDay, addDaysStr, sheet } from './ui.js';
 import { api, state, occurrences, todayStr, nowLocal, membersList, member, listsList, refreshCounts, emit, sync } from './store.js';
-import { openEventDetail, openEventEditor, openTaskEditor, toggleTask, taskDueLabel, errorText, describeRrule } from './editors.js';
+import { openEventDetail, openEventEditor, openTaskEditor, toggleTask, taskDueLabel, errorText, describeRrule, openWhoAmI } from './editors.js';
 import { utcToLocal } from './time.js';
 import { eventIcon } from './icons.js';
 
@@ -92,6 +92,7 @@ export function TodayView() {
     statusBanner(),
     h('p', { class: 'muted', style: { margin: '6px 0 0', fontWeight: 600 } }, fmtDay(today)),
     h('h2', { class: 'hello' }, `${greet}, ${nm}`),
+    !state.me.memberId && membersList().length ? h('button', { type: 'button', class: 'banner info', style: { width: '100%', textAlign: 'left', border: 0, cursor: 'pointer' }, onclick: () => openWhoAmI() }, icon('people'), h('span', null, h('b', null, 'Which family profile is you?'), h('br'), 'Tap to choose (for example Mom or Dad) so events for you and family alerts reach you.')) : null,
     state.proposalsCount ? h('a', { class: 'banner info', href: '#/inbox', style: { textDecoration: 'none' } }, icon('assistant'), `${state.proposalsCount} suggestion${state.proposalsCount > 1 ? 's' : ''} from the assistant waiting for you to confirm`) : null,
     next ? h('button', { type: 'button', class: 'next-up', onclick: () => openEventDetail(next.ev, next) },
       h('div', { class: 'k' }, next.startUtc <= nowMs ? 'Happening now' : next.start.slice(0, 10) === today ? `Next · in ${untilText(next.startUtc - nowMs)}` : `Next · ${relDay(next.start, today) || fmtDayShort(next.start)}`),

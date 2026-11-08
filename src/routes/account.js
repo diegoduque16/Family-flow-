@@ -41,7 +41,8 @@ async function createHousehold(db, { name, timezone }, userId) {
     await run(db, 'INSERT INTO lists (id, household_id, name, kind, sort, version, seq, created_at, updated_at) VALUES (?,?,?,?,?,1,?,?,?)',
       uid('l_'), id, l.name, l.kind, sort++, seq, t, t);
   }
-  await run(db, 'INSERT INTO memberships (household_id, user_id, role, member_id, created_at) VALUES (?,?,?,?,?)', id, userId, 'owner', memberIds[0], t);
+  // Not linked to a profile yet: the app asks “Which profile is you?” on first open (so the creator isn't assumed to be Mom).
+  await run(db, 'INSERT INTO memberships (household_id, user_id, role, member_id, created_at) VALUES (?,?,?,?,?)', id, userId, 'owner', null, t);
   await run(db, 'UPDATE users SET current_household_id = ? WHERE id = ?', id, userId);
   await audit(db, { householdId: id, userId, action: 'household.create' });
   return id;
@@ -245,6 +246,8 @@ async function findInvite(db, token) {
 async function acceptInvite(db, inv, userId) {
   const exists = await one(db, 'SELECT 1 FROM memberships WHERE household_id = ? AND user_id = ?', inv.household_id, userId);
   if (!exists) {
+    // The owner chose a profile for this invitation: it becomes this person's (one login per profile).
+    if (inv.member_id) await run(db, 'UPDATE memberships SET member_id = NULL WHERE household_id = ? AND member_id = ?', inv.household_id, inv.member_id);
     await run(db, 'INSERT INTO memberships (household_id, user_id, role, member_id, created_at) VALUES (?,?,?,?,?)',
       inv.household_id, userId, inv.role, inv.member_id, now());
   }
@@ -291,6 +294,37 @@ export async function listPeople(req, env, ctx) {
   return json({ people: people.map((p) => ({ ...p, email: ctx.role === 'owner' || p.id === ctx.user.id ? p.email : undefined })) });
 }
 
+async function checkProfile(db, ctx, memberId) {
+  if (!(await one(db, 'SELECT 1 FROM members WHERE id = ? AND household_id = ? AND deleted_at IS NULL', memberId, ctx.household.id))) {
+    throw new HttpError(422, 'invalid', 'That family profile no longer exists.', { field: 'memberId' });
+  }
+}
+
+// "This is me": anyone can choose which family profile is them (or create one with their name).
+export async function linkMyProfile(req, env, ctx) {
+  const body = validate(v.object({ memberId: v.string({ max: 60 }).nullable(), createNamed: v.string({ min: 1, max: 40 }).optional() }), await readJson(req));
+  const db = env.DB;
+  let memberId = body.memberId ?? null;
+  if (body.createNamed) {
+    const count = await one(db, 'SELECT COUNT(*) AS n FROM members WHERE household_id = ? AND deleted_at IS NULL', ctx.household.id);
+    if (count.n >= 20) throw new HttpError(422, 'limit', 'A household can have up to 20 family members.');
+    const used = (await all(db, 'SELECT color FROM members WHERE household_id = ? AND deleted_at IS NULL', ctx.household.id)).map((r) => r.color);
+    const palette = ['#E76F51', '#2A9D8F', '#E9A23B', '#7C6CF2', '#D9487D', '#3A86FF', '#6A994E', '#8D6E63', '#F4A261', '#264653', '#9B5DE5', '#00A6A6'];
+    memberId = uid('m_');
+    const t = now();
+    await run(db, 'INSERT INTO members (id, household_id, name, color, kind, sort, version, seq, created_at, updated_at) VALUES (?,?,?,?,?,?,1,?,?,?)',
+      memberId, ctx.household.id, body.createNamed.trim(), palette.find((c) => !used.includes(c)) || palette[0], ctx.role === 'child' ? 'child' : 'adult', count.n, await nextSeq(db, ctx.household.id), t, t);
+  } else if (memberId) {
+    await checkProfile(db, ctx, memberId);
+    const taken = await one(db, 'SELECT u.name FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.household_id = ? AND m.member_id = ? AND m.user_id != ?', ctx.household.id, memberId, ctx.user.id);
+    if (taken && ctx.role !== 'owner') throw new HttpError(409, 'taken', `That profile is already ${taken.name}’s. Ask the household owner to change it.`);
+    if (taken) await run(db, 'UPDATE memberships SET member_id = NULL WHERE household_id = ? AND member_id = ? AND user_id != ?', ctx.household.id, memberId, ctx.user.id);
+  }
+  await run(db, 'UPDATE memberships SET member_id = ? WHERE household_id = ? AND user_id = ?', memberId, ctx.household.id, ctx.user.id);
+  await audit(db, { householdId: ctx.household.id, userId: ctx.user.id, action: 'person.link_profile', detail: { memberId } });
+  return json({ ok: true, memberId });
+}
+
 export async function updatePerson(req, env, ctx, { userId }) {
   requireRole(ctx, ['owner']);
   const body = validate(v.object({
@@ -303,6 +337,11 @@ export async function updatePerson(req, env, ctx, { userId }) {
   if (body.role && body.role !== 'owner' && target.role === 'owner') {
     const owners = await one(db, "SELECT COUNT(*) AS n FROM memberships WHERE household_id = ? AND role = 'owner'", ctx.household.id);
     if (owners.n <= 1) throw new HttpError(422, 'last_owner', 'The household needs at least one owner.');
+  }
+  if (body.memberId) {
+    await checkProfile(db, ctx, body.memberId);
+    // One login per profile: whoever had it is unlinked.
+    await run(db, 'UPDATE memberships SET member_id = NULL WHERE household_id = ? AND member_id = ? AND user_id != ?', ctx.household.id, body.memberId, userId);
   }
   await run(db, 'UPDATE memberships SET role = COALESCE(?, role), member_id = CASE WHEN ? THEN ? ELSE member_id END WHERE household_id = ? AND user_id = ?',
     body.role ?? null, body.memberId !== undefined ? 1 : 0, body.memberId ?? null, ctx.household.id, userId);

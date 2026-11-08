@@ -2,7 +2,7 @@
 import { h, icon, sheet, toast, choose, confirmDialog, fmtDay, fmtRange, fmtTime, reminderLabel, debounce, addDaysStr, avatarEl } from './ui.js';
 import { suggestIcon, eventIcon, ICON_CHOICES } from './icons.js';
 import { micButton, cleanTitle } from './voice.js';
-import { api, state, mutate, membersList, listsList, member, tz, todayStr, nowLocal, localEventRow, groupsList, groupName } from './store.js';
+import { api, state, mutate, membersList, listsList, member, tz, todayStr, nowLocal, localEventRow, groupsList, groupName, sync } from './store.js';
 import { parseRrule, buildRrule } from './time.js';
 
 const DOW = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
@@ -532,4 +532,40 @@ export function taskDueLabel(t) {
   const overdue = !t.done && (d < today || (d === today && t.due.length > 10 && t.due < nowLocal()));
   const txt = d === today ? `Today${t.due.length > 10 ? ' ' + fmtTime(t.due) : ''}` : d === addDaysStr(today, 1) ? `Tomorrow${t.due.length > 10 ? ' ' + fmtTime(t.due) : ''}` : `${fmtDay(d)}${t.due.length > 10 ? ' ' + fmtTime(t.due) : ''}`;
   return h('span', { class: overdue ? 'overdue' : '' }, overdue ? `Overdue · ${txt}` : txt);
+}
+
+// ---------- "Which profile is you?" ----------
+// Links the signed-in login to a family profile (Hayley = Mom, Diego = Dad…), so "for Mom" events, assigned tasks and groups reach the right person.
+export async function openWhoAmI(onDone) {
+  let people = [];
+  try { people = (await api('GET', '/api/household/people')).people; } catch { /* offline: show without names */ }
+  const takenBy = new Map(people.filter((p) => p.member_id && p.id !== state.me.user.id).map((p) => [p.member_id, p.name]));
+  const owner = state.me.role === 'owner';
+  const first = String(state.me.user.name || '').split(' ')[0] || 'me';
+  const err = h('div');
+  let s;
+  const pick = async (body, label) => {
+    try {
+      await api('PATCH', '/api/me/profile', body);
+      state.me = await api('GET', '/api/me');
+      s.close();
+      await sync({ full: true });
+      toast(label);
+      if (onDone) onDone();
+    } catch (e) { err.replaceChildren(h('div', { class: 'banner bad' }, errorText(e))); }
+  };
+  s = sheet({
+    title: 'Which profile is you?',
+    body: h('div', null,
+      h('p', { class: 'muted', style: { marginTop: 0 } }, 'Pick your profile so events and tasks “for” you, family groups and alerts reach you. You can rename profiles in More → Family profiles.'),
+      h('div', { class: 'card', style: { padding: '4px 12px' } }, h('ul', { class: 'list' }, membersList().map((m) => {
+        const t = takenBy.get(m.id);
+        const mine = state.me.memberId === m.id;
+        return h('li', null, h('button', { type: 'button', class: 'item', disabled: !!t && !owner && !mine, onclick: () => pick({ memberId: m.id }, `You’re ${m.name} now`) },
+          avatarEl(m), h('span', { class: 'grow' }, h('div', { class: 'title' }, m.name, mine ? ' (you)' : ''), t ? h('div', { class: 'meta' }, owner ? `Now ${t}’s — choosing it moves it to you` : `${t}’s profile`) : null),
+          mine ? icon('check') : null));
+      }))),
+      h('button', { type: 'button', class: 'btn block', style: { marginTop: '10px' }, onclick: () => pick({ createNamed: first }, `Added you as ${first}`) }, icon('plus'), `I’m not listed — add “${first}”`),
+      err),
+  });
 }
