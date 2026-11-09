@@ -150,7 +150,7 @@ function memberEditor(m, rerender) {
     const f = fileIn.files && fileIn.files[0];
     fileIn.value = '';
     if (!f) return;
-    try { avatar = await photoToDataUrl(f); renderAvatar(); } catch (e) { err.replaceChildren(h('div', { class: 'banner bad' }, e.message || 'Could not use that picture.')); }
+    try { avatar = await photoToDataUrl(f); renderAvatar(); } catch (e) { if (e.message === 'cancelled') return; err.replaceChildren(h('div', { class: 'banner bad' }, e.message || 'Could not use that picture.')); }
   });
   name.addEventListener('input', renderAvatar);
   lab.input.addEventListener('input', renderAvatar);
@@ -160,8 +160,12 @@ function memberEditor(m, rerender) {
         h('div', { class: 'row', style: { gap: '6px', flexWrap: 'wrap' } },
           h('button', { type: 'button', class: 'btn sm', onclick: () => fileIn.click() }, '📷 Photo'),
           h('button', { type: 'button', class: 'btn sm', onclick: () => { emojiRow.hidden = !emojiRow.hidden; } }, '😀 Avatar'),
+          h('button', { type: 'button', class: 'btn sm', onclick: async () => {
+            if (!/^data:image\//.test(avatar || '')) { fileIn.click(); return; }
+            try { avatar = await photoToDataUrl(await (await fetch(avatar)).blob()); renderAvatar(); } catch (e) { if (e.message !== 'cancelled') err.replaceChildren(h('div', { class: 'banner bad' }, e.message)); }
+          } }, '✥ Adjust'),
           h('button', { type: 'button', class: 'btn ghost sm', onclick: () => { avatar = null; renderAvatar(); } }, 'Remove')),
-        h('p', { class: 'hint', style: { margin: 0 } }, 'Photos are cropped to a square and shrunk on your phone before they’re saved.'))),
+        h('p', { class: 'hint', style: { margin: 0 } }, 'After choosing a photo you can drag and zoom to centre it. “Adjust” re-centres the current one.'))),
     emojiRow, fileIn);
   const s = sheet({
     title: m ? 'Edit profile' : 'New profile',
@@ -187,22 +191,79 @@ function memberEditor(m, rerender) {
   renderAvatar();
 }
 
+// Photo picker with a crop step: drag to centre the face, slide (or pinch / scroll) to zoom. Saves a small square JPEG.
 async function photoToDataUrl(file, size = 192) {
   if (!/^image\//.test(file.type || 'image/')) throw new Error('Please choose a picture.');
   const url = URL.createObjectURL(file);
+  let img;
   try {
-    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('Could not open that picture. Try a JPEG or PNG.')); i.src = url; });
-    const side = Math.min(img.naturalWidth, img.naturalHeight);
-    const c = document.createElement('canvas');
-    c.width = size; c.height = size;
-    c.getContext('2d').drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, size, size);
-    let q = 0.85;
-    let out = c.toDataURL('image/jpeg', q);
-    while (out.length > 100000 && q > 0.4) { q -= 0.1; out = c.toDataURL('image/jpeg', q); }
-    return out;
+    img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('Could not open that picture. Try a JPEG or PNG.')); i.src = url; });
   } finally { URL.revokeObjectURL(url); }
+  const W = img.naturalWidth, H = img.naturalHeight;
+  const FRAME = 260;
+  const base = FRAME / Math.min(W, H); // scale at which the photo just covers the frame
+  let zoom = 1, cx = W / 2, cy = H / 2; // centre of the frame, in photo pixels
+  const view = h('canvas', { width: FRAME * 2, height: FRAME * 2, style: { width: `${FRAME}px`, height: `${FRAME}px`, borderRadius: '50%', touchAction: 'none', cursor: 'grab', background: 'var(--surface-2, #eee)', display: 'block', margin: '0 auto' }, 'aria-label': 'Drag to move the photo' });
+  const clamp = () => {
+    const half = FRAME / 2 / (base * zoom);
+    cx = Math.min(Math.max(cx, half), W - half);
+    cy = Math.min(Math.max(cy, half), H - half);
+  };
+  const drawTo = (canvas, px) => {
+    const g = canvas.getContext('2d');
+    const k = (px / FRAME) * base * zoom; // canvas px per photo px
+    g.fillStyle = '#fff'; g.fillRect(0, 0, px, px);
+    g.drawImage(img, px / 2 - cx * k, px / 2 - cy * k, W * k, H * k);
+  };
+  const draw = () => { clamp(); drawTo(view, FRAME * 2); };
+  const slider = h('input', { type: 'range', min: '1', max: '4', step: '0.01', value: '1', 'aria-label': 'Zoom', style: { width: '100%' } });
+  slider.addEventListener('input', () => { zoom = Number(slider.value); draw(); });
+  // Drag (one finger / mouse) and pinch (two fingers).
+  const pts = new Map();
+  let pinch0 = null;
+  view.addEventListener('pointerdown', (e) => { view.setPointerCapture(e.pointerId); pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); view.style.cursor = 'grabbing'; });
+  view.addEventListener('pointermove', (e) => {
+    if (!pts.has(e.pointerId)) return;
+    const prev = pts.get(e.pointerId);
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size === 2) {
+      const [a, b] = [...pts.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (pinch0) { zoom = Math.min(4, Math.max(1, pinch0.zoom * d / pinch0.d)); slider.value = String(zoom); }
+      else pinch0 = { d, zoom };
+    } else {
+      const k = base * zoom;
+      cx -= (e.clientX - prev.x) / k; cy -= (e.clientY - prev.y) / k;
+    }
+    draw();
+  });
+  const up = (e) => { pts.delete(e.pointerId); if (pts.size < 2) pinch0 = null; view.style.cursor = 'grab'; };
+  view.addEventListener('pointerup', up); view.addEventListener('pointercancel', up);
+  view.addEventListener('wheel', (e) => { e.preventDefault(); zoom = Math.min(4, Math.max(1, zoom * (e.deltaY < 0 ? 1.08 : 1 / 1.08))); slider.value = String(zoom); draw(); }, { passive: false });
+  draw();
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const s = sheet({
+      title: 'Position the photo',
+      body: h('div', { class: 'stack', style: { padding: '8px 0', gap: '14px' } },
+        view,
+        h('div', { class: 'row', style: { gap: '10px' } }, h('span', { 'aria-hidden': 'true' }, '−'), slider, h('span', { 'aria-hidden': 'true' }, '+')),
+        h('p', { class: 'muted small', style: { textAlign: 'center', margin: 0 } }, 'Drag to centre the face. Slide or pinch to zoom.')),
+      foot: [
+        h('button', { type: 'button', class: 'btn', onclick: () => { done = true; s.close(); reject(new Error('cancelled')); } }, 'Cancel'),
+        h('button', { type: 'button', class: 'btn primary', onclick: () => {
+          const c = document.createElement('canvas');
+          c.width = size; c.height = size;
+          drawTo(c, size);
+          let q = 0.85;
+          let out = c.toDataURL('image/jpeg', q);
+          while (out.length > 100000 && q > 0.4) { q -= 0.1; out = c.toDataURL('image/jpeg', q); }
+          done = true; s.close(); resolve(out);
+        } }, 'Use photo')],
+      onClose: () => { if (!done) reject(new Error('cancelled')); },
+    });
+  });
 }
-
 // ---------- family groups ----------
 export function GroupsView(rerender) {
   const groups = groupsList();
