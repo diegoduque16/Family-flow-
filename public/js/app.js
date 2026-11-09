@@ -1,6 +1,6 @@
 // App shell: boot, sign-in/sign-up/join, tab navigation, the universal Add button and voice capture.
 import { h, icon, toast, sheet, closeAllSheets, labelInput } from './ui.js';
-import { api, state, on, sync, loadCached, startAutoSync, refreshCounts, clearLocalData, resetState } from './store.js';
+import { api, state, on, sync, loadCached, startAutoSync, refreshCounts, clearLocalData, resetState, scroller } from './store.js';
 import { TodayView, CalendarView, InboxView, AssistantView, assistantDraft } from './views.js';
 import { MoreView, TasksView, FamilyView, GroupsView, PeopleView, PlacesView, SyncView, NotificationsView, HouseholdView, DataView, DiagnosticsView, AccountView } from './more.js';
 import { openEventEditor, openTaskEditor, openEventDetail, errorText, openImportDocument } from './editors.js';
@@ -174,12 +174,12 @@ function render() {
   const sub = tab === 'today' || tab === 'more' ? state.household && state.household.name : null;
   mounted.header.replaceChildren(h('h1', null, title, sub ? h('span', { class: 'sub' }, sub) : null),
     h('span', { class: 'faint small sync-status', 'aria-live': 'polite' }, state.syncing ? 'Syncing…' : !state.online ? 'Offline' : ''));
-  const keepScroll = mounted.lastTab === `${tab}/${r.sub}` ? window.scrollY : 0;
+  const keepScroll = mounted.lastTab === `${tab}/${r.sub}` ? scroller().scrollTop : 0;
   const ae = document.activeElement;
   const refocus = ae && mounted.main.contains(ae) && ae.getAttribute('aria-label');
   mounted.main.replaceChildren(view);
   if (refocus) { const el = mounted.main.querySelector(`[aria-label="${CSS.escape(refocus)}"]`); if (el) el.focus({ preventScroll: true }); }
-  if (mounted.lastTab !== `${tab}/${r.sub}`) window.scrollTo(0, 0); else window.scrollTo(0, keepScroll);
+  scroller().scrollTop = mounted.lastTab !== `${tab}/${r.sub}` ? 0 : keepScroll;
   mounted.lastTab = `${tab}/${r.sub}`;
   mounted.fabs.hidden = tab === 'assistant';
   renderTabs(tab);

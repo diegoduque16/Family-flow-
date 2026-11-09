@@ -53,6 +53,9 @@ h1, h2, h3 { margin: 0; line-height: 1.2; }
 
 /* ---------- shell ---------- */
 .shell { min-height: 100vh; padding-bottom: calc(var(--tab-h) + var(--safe-b) + 96px); }
+/* The window itself never scrolls once the app is open (only .shell does), so iOS can't shift the fixed tab bar and buttons while scrolling. */
+html:has(.shell), html:has(.shell) body { overflow: hidden; height: 100%; }
+html:has(.shell) .shell { position: fixed; inset: 0; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; }
 .topbar {
   position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--bg) 88%, transparent);
   backdrop-filter: saturate(1.4) blur(12px); -webkit-backdrop-filter: saturate(1.4) blur(12px);
@@ -227,7 +230,7 @@ textarea.input { min-height: 84px; resize: vertical; }
 /* ---------- calendar ---------- */
 .cal-head { display: flex; align-items: center; gap: 4px; margin: 4px 0 10px; }
 .cal-head .title { flex: 1; font-size: 18px; font-weight: 750; }
-.filter { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 10px; scrollbar-width: none; }
+.filter { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 0 10px; }
 .filter::-webkit-scrollbar { display: none; }
 .filter .chip { flex: none; }
 

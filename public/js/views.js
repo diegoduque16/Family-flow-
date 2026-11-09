@@ -1,6 +1,6 @@
 // Main screens: Today, Calendar, Inbox, Assistant.
 import { h, icon, toast, fmtDay, fmtDayShort, fmtMonth, fmtTime, fmtRange, fmtWeekday, relDay, addDaysStr, sheet } from './ui.js';
-import { api, state, occurrences, todayStr, nowLocal, membersList, member, listsList, refreshCounts, emit, sync, tz } from './store.js';
+import { api, state, occurrences, todayStr, nowLocal, membersList, member, listsList, refreshCounts, emit, sync, tz, scroller } from './store.js';
 import { openEventDetail, openEventEditor, openTaskEditor, toggleTask, taskDueLabel, errorText, describeRrule, openWhoAmI } from './editors.js';
 import { utcToLocal } from './time.js';
 import { eventIcon } from './icons.js';
@@ -265,8 +265,9 @@ function dayView(d, today, f) {
   lastScrolledDay = d;
   setTimeout(() => {
     const target = d === today ? Math.max(0, toMin(nowLocal()) / 60 - 1.5) : (items[0] ? items[0].s / 60 - 0.5 : 7.5);
-    const top = tl.getBoundingClientRect().top + window.scrollY + target * HOUR_PX - 120;
-    window.scrollTo({ top: Math.max(0, top), behavior: 'instant' in window ? 'instant' : 'auto' });
+    const sc = scroller();
+    const top = tl.getBoundingClientRect().top - (sc.getBoundingClientRect ? sc.getBoundingClientRect().top : 0) + sc.scrollTop + target * HOUR_PX - 120;
+    sc.scrollTop = Math.max(0, top);
   }, 0);
   return dayParts(allDay, timed, tl);
 }
@@ -408,7 +409,7 @@ export function AssistantView(rerender, { startRecording } = {}) {
       busy = false; sendBtn.disabled = !f.assistant; saveChat(); renderList(); scrollEnd();
     }
   }
-  const scrollEnd = () => setTimeout(() => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }), 30);
+  const scrollEnd = () => setTimeout(() => { const sc = scroller(); sc.scrollTo({ top: sc.scrollHeight, behavior: 'smooth' }); }, 30);
   const suggestions = ['What’s on this weekend?', 'Remind me to pay the sitter Friday', 'Swim lessons every Saturday 10am for Kiddo 1', 'Add milk and eggs to groceries'];
   const composer = h('div', { class: 'composer' },
     !chat.items.length && f.assistant ? h('div', { class: 'suggest' }, suggestions.map((s) => h('button', { type: 'button', class: 'chip', onclick: () => send(s) }, s))) : null,

@@ -518,8 +518,12 @@ const HOWTO = {
   school: ['In your school app or website (ParentSquare, Google Classroom, the district site…), open the Calendar.', 'Look for Subscribe, Sync, iCal or “Add to calendar” and copy that link (it often starts with webcal://).', 'Paste it below. On iPhone, copy the link instead of tapping it, or your phone’s own Calendar app grabs it.'],
   google: ['On a computer, open calendar.google.com.', 'Click the gear (top right) → Settings.', 'On the left, under “Settings for my calendars”, click the calendar you want.',
     'Scroll to “Integrate calendar” and copy the “Secret address in iCal format”.', 'Paste it below. (Work or school Google accounts: your administrator may have turned this off.)'],
-  outlook: ['Open outlook.com (or Outlook on the web for work) and go to the calendar.', 'Settings (gear) → Calendar → Shared calendars.', 'Under “Publish a calendar”, pick the calendar and “Can view all details”, then Publish.',
-    'Copy the ICS link (not the HTML one) and paste it below. (Work accounts: your IT admin may have turned publishing off.)'],
+  outlook: ['Use a computer: the Outlook phone app and the iPhone/Android Outlook website can’t publish a calendar.',
+    'In a web browser go to outlook.com (personal) or outlook.office.com (work or school) and sign in. Open the Calendar (calendar icon on the far left).',
+    'Click Settings — the ⚙ gear at the top right of the page — then Calendar → Shared calendars.',
+    'Scroll down to “Publish a calendar”, pick your calendar and “Can view all details”, then click Publish.',
+    'Copy the ICS link (not the HTML one), send it to yourself, and paste it below.',
+    'No “Publish a calendar” section? Your school or company has switched it off (common for university and work accounts). Then this calendar can’t be linked; ask their IT team, or add the important events in Family Flow.'],
   apple: ['On iPhone: Calendar app → Calendars → tap ⓘ next to an iCloud calendar.', 'Turn on “Public Calendar” and tap Share Link → Copy.', 'Paste it below.'],
 };
 function sourceStatus(s) {

@@ -294,3 +294,6 @@ export function startAutoSync() {
   timer = setInterval(() => { if (document.visibilityState === 'visible') sync(); }, 30000);
   if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('message', (e) => { if (e.data && e.data.type === 'push') { sync(); refreshCounts(); } });
 }
+
+// The element that scrolls the app's pages (the shell), or the window before the app has mounted.
+export const scroller = () => document.querySelector('.shell') || document.scrollingElement || document.documentElement;
