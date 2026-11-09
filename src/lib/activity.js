@@ -40,7 +40,7 @@ export async function notifyActivity(ctx, { userIds, title, body, refType, refId
       uid('n_'), ctx.household.id, u, 'activity', title, body, refType, refId, t);
   }
   const push = (async () => {
-    const url = refType === 'event' ? `/#/event/${refId}` : refType === 'task' ? '/#/tasks' : '/#/inbox';
+    const url = refType === 'event' ? `/#/event/${refId}` : refType === 'task' ? '/#/tasks' : refType === 'people' ? '/#/more/people' : '/#/inbox';
     for (const u of recipients) {
       const subs = await all(db, 'SELECT * FROM push_subscriptions WHERE user_id = ?', u);
       for (const s of subs) {

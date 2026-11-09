@@ -304,4 +304,5 @@ if ('serviceWorker' in navigator) {
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
   }).catch((e) => console.warn('Service worker failed to register', e));
 }
+window.__ffStarted = true;
 boot();

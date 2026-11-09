@@ -119,7 +119,7 @@ test('private event reminders go only to their owner', async () => {
   const start = utcToLocal(Date.now() + 2 * 3600000, 'America/New_York');
   const ev = (await a.c.post('/api/events', { title: 'Gift shopping', start, visibility: 'private', reminders: [30] })).data.event;
   await deliverDueReminders(env, new Date(ev.startUtc).getTime() - 30 * 60000 + 1000);
-  assert.equal((await a.c.get('/api/notifications')).data.notifications.length, 1);
+  assert.equal((await a.c.get('/api/notifications')).data.notifications.filter((n) => n.kind !== 'activity').length, 1);
   assert.equal((await b.c.get('/api/notifications')).data.notifications.length, 0);
 });
 

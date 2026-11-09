@@ -1,6 +1,7 @@
 // Sign-up, sign-in, households, family profiles, invitations, data export / deletion.
 import { eventVisible, listVisible } from '../lib/audience.js';
 import { addToGroup } from './groups.js';
+import { notifyActivity } from '../lib/activity.js';
 import { HttpError, json, readJson, validate, v, uid, now, randomToken, sha256, EMAIL_RE, COLOR_RE, isValidTimeZone } from '../lib/util.js';
 import { one, all, run, nextSeq, audit, rateLimit } from '../lib/db.js';
 import { hashPassword, verifyPassword, createSession, sessionCookie, clearCookie, requireRole } from '../lib/auth.js';
@@ -64,7 +65,7 @@ const signupSchema = v.object({
   label: v.string({ max: 30 }).optional(), // how they want to show up, e.g. Mom
 });
 
-export async function signup(req, env) {
+export async function signup(req, env, ctx) {
   const db = env.DB;
   await rateLimit(db, `signup:${ip(req)}`, 10, 3600);
   const body = validate(signupSchema, await readJson(req));
@@ -81,7 +82,7 @@ export async function signup(req, env) {
   const userId = uid('u_');
   await run(db, 'INSERT INTO users (id, email, name, pw_hash, pw_salt, pw_iter, created_at) VALUES (?,?,?,?,?,?,?)',
     userId, email, body.name, pw.hash, pw.salt, pw.iter, now());
-  if (invite) await acceptInvite(db, invite, userId, { label: body.label });
+  if (invite) await acceptInvite(db, invite, userId, { label: body.label, env, waitUntil: ctx && ctx.waitUntil });
   else await createHousehold(db, { name: body.householdName, timezone: tz }, userId, { userName: body.name, label: body.label });
   await audit(db, { userId, action: 'user.signup' });
   const token = await createSession(db, userId, req.headers.get('user-agent'));
@@ -264,7 +265,7 @@ async function findInvite(db, token) {
   return inv;
 }
 
-async function acceptInvite(db, inv, userId, { label = null } = {}) {
+async function acceptInvite(db, inv, userId, { label = null, env = null, waitUntil = null } = {}) {
   const exists = await one(db, 'SELECT 1 FROM memberships WHERE household_id = ? AND user_id = ?', inv.household_id, userId);
   if (!exists && !inv.member_id) {
     // No profile picked for this invitation: give them their own, with their name.
@@ -279,10 +280,29 @@ async function acceptInvite(db, inv, userId, { label = null } = {}) {
     await run(db, 'INSERT INTO memberships (household_id, user_id, role, member_id, created_at) VALUES (?,?,?,?,?)',
       inv.household_id, userId, inv.role, inv.member_id, now());
   }
+  let joinedGroup = false;
   if (inv.group_id) {
     // Group link: their profile joins the group (also works for people already in the household).
     const m = await one(db, 'SELECT member_id FROM memberships WHERE household_id = ? AND user_id = ?', inv.household_id, userId);
-    if (m && m.member_id) await addToGroup(db, inv.household_id, inv.group_id, m.member_id);
+    if (m && m.member_id) {
+      const g = await one(db, 'SELECT member_ids FROM family_groups WHERE id = ?', inv.group_id);
+      joinedGroup = !JSON.parse((g && g.member_ids) || '[]').includes(m.member_id);
+      await addToGroup(db, inv.household_id, inv.group_id, m.member_id);
+    }
+  }
+  // Let the rest of the family know someone new joined (the family, or a group).
+  if (env && (!exists || joinedGroup)) {
+    try {
+      const u = await one(db, 'SELECT name FROM users WHERE id = ?', userId);
+      const others = (await all(db, 'SELECT user_id FROM memberships WHERE household_id = ? AND user_id != ?', inv.household_id, userId)).map((r) => r.user_id);
+      const who = (u && u.name) || 'Someone';
+      const where = inv.group_id && inv.group_name ? `“${inv.group_name}”` : (inv.household_name || 'the family');
+      await notifyActivity({ env, waitUntil, household: { id: inv.household_id }, user: { id: userId } }, {
+        userIds: others, title: `${who} joined ${where}`,
+        body: !exists ? `${who} now has Family Flow and can see the family calendar.` : `${who} was added to ${where}.`,
+        refType: 'people', refId: userId,
+      });
+    } catch (e) { console.error('join notification failed', e); }
   }
   if ((inv.max_uses || 1) > 1) await run(db, 'UPDATE invites SET uses = uses + 1, used_at = ?, used_by = ? WHERE id = ? AND uses < max_uses', now(), userId, inv.id);
   else await run(db, 'UPDATE invites SET used_at = ?, used_by = ? WHERE id = ? AND used_at IS NULL', now(), userId, inv.id);
@@ -330,7 +350,7 @@ export async function inviteInfo(req, env, ctx, { token }) {
 
 export async function joinWithInvite(req, env, ctx, { token }) {
   const inv = await findInvite(env.DB, token);
-  await acceptInvite(env.DB, inv, ctx.user.id);
+  await acceptInvite(env.DB, inv, ctx.user.id, { env, waitUntil: ctx.waitUntil });
   return json({ ok: true, householdId: inv.household_id });
 }
 

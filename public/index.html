@@ -15,6 +15,33 @@
   <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/icons/icon-180.png">
   <link rel="stylesheet" href="/css/app.css">
+  <script>
+    // Safety net: if the app hasn't started within 8 seconds (for example a saved copy is out of date),
+    // show a button that clears the saved copy and reloads.
+    (function () {
+      function repair() {
+        var done = function () { location.reload(); };
+        var jobs = [];
+        if (navigator.serviceWorker) jobs.push(navigator.serviceWorker.getRegistrations().then(function (rs) { return Promise.all(rs.map(function (r) { return r.unregister(); })); }));
+        if (window.caches) jobs.push(caches.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k); })); }));
+        Promise.all(jobs).then(done, done);
+      }
+      function offer() {
+        if (window.__ffStarted) return;
+        var box = document.querySelector('.boot');
+        if (!box || box.querySelector('.boot-fix')) return;
+        var p = document.createElement('p'); p.className = 'boot-fix'; p.style.cssText = 'margin-top:18px;color:inherit';
+        p.textContent = 'Taking longer than usual. ';
+        var b = document.createElement('button'); b.type = 'button'; b.textContent = 'Refresh the app';
+        b.style.cssText = 'display:block;margin:10px auto 0;padding:12px 20px;border:0;border-radius:12px;background:#21695F;color:#fff;font:600 16px system-ui';
+        b.onclick = function () { b.disabled = true; b.textContent = 'Refreshing…'; repair(); };
+        p.appendChild(b); box.appendChild(p);
+      }
+      window.__ffRepair = repair;
+      setTimeout(offer, 8000);
+      window.addEventListener('error', function (e) { if (!window.__ffStarted && e && (e.target && e.target.tagName === 'SCRIPT' || /import|module|export/i.test(String(e.message || '')))) setTimeout(offer, 1500); }, true);
+    })();
+  </script>
   <script type="module" src="/js/app.js"></script>
 </head>
 <body>

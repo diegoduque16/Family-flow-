@@ -1,10 +1,10 @@
 // Service worker: offline app shell, web push display, notification clicks.
-const VERSION = 'ff-v24';
+const VERSION = 'ff-v25';
 const SHELL = ['/', '/index.html', '/css/app.css', '/js/app.js', '/js/ui.js', '/js/store.js', '/js/time.js', '/js/editors.js', '/js/views.js', '/js/more.js', '/js/icons.js', '/js/install.js', '/js/setup.js', '/js/holidays.js', '/js/voice.js',
   '/manifest.webmanifest', '/icons/icon.svg', '/icons/icon-192.png', '/icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== VERSION).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
@@ -20,11 +20,15 @@ self.addEventListener('fetch', (e) => {
       .catch(() => caches.match('/index.html')));
     return;
   }
-  // static files: serve cache, refresh in background
+  // App files: always the latest from the network (so old and new files never mix); the saved copy is only for offline.
   e.respondWith(caches.open(VERSION).then(async (c) => {
-    const hit = await c.match(e.request);
-    const net = fetch(e.request).then((r) => { if (r.ok) c.put(e.request, r.clone()); return r; }).catch(() => hit);
-    return hit || net;
+    try {
+      const r = await fetch(e.request, { cache: 'no-cache' });
+      if (r.ok) c.put(e.request, r.clone());
+      return r;
+    } catch {
+      return (await c.match(e.request)) || Response.error();
+    }
   }));
 });
 

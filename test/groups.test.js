@@ -19,7 +19,7 @@ async function family() {
   return { env, mom, dad, grandma, p: { mom: momP, dad: dadP, k1, gma }, nuclear, extended };
 }
 const inbox = async (who) => (await who.c.get('/api/notifications')).data.notifications;
-const activity = async (who) => (await inbox(who)).filter((n) => n.kind === 'activity');
+const activity = async (who) => (await inbox(who)).filter((n) => n.kind === 'activity' && n.refType !== 'people'); // join alerts are tested in join.test.js
 
 test('groups: create, validate members, appear in sync for everyone', async () => {
   const f = await family();
@@ -207,7 +207,7 @@ test('labels: how people show up (Mom, Dad) is used by alerts, the assistant and
   const inv = await d.c.post('/api/invites', { role: 'adult' });
   const hy = await signedUp(env, { name: 'Hayley Duque', label: 'Mom', inviteToken: inv.data.token });
   await hy.c.post('/api/events', { title: 'Pediatrician', start: '2026-12-10T09:00' });
-  const a = (await d.c.get('/api/notifications')).data.notifications.filter((n) => n.kind === 'activity');
+  const a = (await d.c.get('/api/notifications')).data.notifications.filter((n) => n.kind === 'activity' && n.refType !== 'people');
   assert.match(a[0].title, /^Mom added/);
   const me = (await d.c.get('/api/sync')).data.members.find((m) => m.id === d.me.memberId);
   const upd = await d.c.patch(`/api/members/${me.id}`, { version: me.version, label: 'Papa' });
