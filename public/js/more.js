@@ -115,7 +115,7 @@ export function FamilyView(rerender) {
   if (!peopleCache) api('GET', '/api/household/people').then(({ people }) => { peopleCache = people; rerender(); }).catch(() => {});
   const loginOf = (m) => (peopleCache || []).find((p) => p.member_id === m.id);
   return h('div', { class: 'page' }, back('Family profiles'),
-    h('p', { class: 'muted' }, 'Everyone in the family, with how they show up in the app (Mom, Dad, Grandma…) and a photo or avatar. Kids and relatives don’t need a login — invite people who should sign in from People & invites.'),
+    h('p', { class: 'muted' }, 'Everyone in the family, with how they show up in the app (Mom, Dad, Grandma…) and a photo or avatar. Kids don’t need a login or a link — parents add and manage them here.'),
     h('div', { class: 'card' }, h('ul', { class: 'list' }, membersList().map((m) => h('li', null,
       h('button', { type: 'button', class: 'item', onclick: () => memberEditor(m, rerender), disabled: !canEdit() },
         avatarEl(m, { size: 40 }),
@@ -125,7 +125,7 @@ export function FamilyView(rerender) {
           peopleCache ? h('div', { class: 'small', style: { marginTop: '2px', overflowWrap: 'anywhere', color: loginOf(m) ? 'var(--ink-2)' : 'var(--ink-3)' } },
             loginOf(m) ? `🔑 Signs in as ${loginOf(m).email || loginOf(m).name}` : 'No login – doesn’t sign in') : null),
         canEdit() ? icon('chev', 'chev') : null))))),
-    canEdit() ? h('button', { type: 'button', class: 'btn block primary', onclick: () => memberEditor(null, rerender) }, icon('plus'), 'Add a profile') : null,
+    canEdit() ? h('button', { type: 'button', class: 'btn block primary', onclick: () => memberEditor(null, rerender) }, icon('plus'), 'Add a child or family member') : null,
     h('button', { type: 'button', class: 'btn block', onclick: () => openWhoAmI(() => { peopleCache = null; rerender(); }) }, 'Which profile is me?'));
 }
 function memberEditor(m, rerender) {
@@ -368,11 +368,15 @@ export function PeopleView(rerender) {
         h('div', { class: 'card' }, h('h2', null, 'Lost the link?'),
           h('p', { class: 'muted small', style: { marginTop: 0 } }, 'People who already joined just need the app’s address and their own email and password. Tap “Send link” next to them, or share it here.'),
           h('button', { type: 'button', class: 'btn block', onclick: () => sendAppLink(null) }, icon('share'), 'Share the Family Flow link')),
-        isOwner() ? h('div', { class: 'card' }, h('h2', null, 'Invite someone'),
-          h('p', { class: 'muted small', style: { marginTop: 0 } }, 'Creates a one-time link that works for 7 days. Send it however you like (text, email).'),
-          h('div', { class: 'two' },
-            h('button', { type: 'button', class: 'btn', onclick: () => invite('adult') }, 'Invite an adult'),
-            h('button', { type: 'button', class: 'btn', onclick: () => invite('child') }, 'Invite a child'))) : null);
+        canEdit() ? h('div', { class: 'card' }, h('h2', null, 'Add a child'),
+          h('p', { class: 'muted small', style: { marginTop: 0 } }, 'Kids don’t need an account or a link. Add them here and parents manage their events, tasks and reminders.'),
+          h('button', { type: 'button', class: 'btn block primary', onclick: () => memberEditor(null, () => { rerender(); toast('Child added — find them in Family profiles'); }) }, icon('plus'), 'Add a child')) : null,
+        isOwner() ? h('div', { class: 'card' }, h('h2', null, 'Invite an adult'),
+          h('p', { class: 'muted small', style: { marginTop: 0 } }, 'For a partner, grandparent or caregiver who should sign in on their own phone. Creates a one-time link that works for 7 days.'),
+          h('button', { type: 'button', class: 'btn block', onclick: () => invite('adult') }, 'Invite an adult'),
+          h('details', { style: { marginTop: '10px' } }, h('summary', { class: 'muted small', style: { cursor: 'pointer' } }, 'Older child with their own phone?'),
+            h('p', { class: 'muted small' }, 'Optional: give them a login so they can see shared events and tick off their tasks (they can’t edit things). Parents still manage everything.'),
+            h('button', { type: 'button', class: 'btn sm', onclick: () => invite('child') }, 'Send a child login link'))) : null);
     } catch (e) { root.replaceChildren(back('People & invites'), h('div', { class: 'banner bad' }, errorText(e))); }
   })();
   return root;
