@@ -76,13 +76,14 @@ Rules:
 - Resolve the year from the document (e.g. a 2026–27 school year runs Aug 2026 to Jun 2027). If no year is given, use the next occurrence on or after today.
 - Use 24-hour times. Leave times out for all-day entries. For multi-day entries (e.g. Winter break Dec 21–Jan 1) give date and end_date.
 - Keep titles short and clear; put extra details in notes. Don't invent anything that isn't in the document.
-- Only fill "who" when the document clearly names a family member.`;
+- Only fill "who" when the document clearly names a family member.
+Always answer by calling the extract_events tool exactly once (with an empty events list if there are no dates).`;
   const block = kind === 'document'
     ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: toBase64(bytes) } }
     : { type: 'image', source: { type: 'base64', media_type: type, data: toBase64(bytes) } };
   const out = await callClaude(env, {
-    max_tokens: 8000, system, tools: [TOOL], tool_choice: { type: 'tool', name: 'extract_events' },
-    messages: [{ role: 'user', content: [block, { type: 'text', text: `Extract all calendar entries from ${fileName ? `“${fileName}”` : 'this file'}.` }] }],
+    max_tokens: 8000, system, tools: [TOOL],
+    messages: [{ role: 'user', content: [block, { type: 'text', text: `Extract all calendar entries from ${fileName ? `“${fileName}”` : 'this file'} and return them with the extract_events tool.` }] }],
   }, { timeoutMs: 110000 });
   const call = (out.content || []).find((b) => b.type === 'tool_use' && b.name === 'extract_events');
   const raw = (call && call.input && Array.isArray(call.input.events)) ? call.input.events : [];

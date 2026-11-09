@@ -28,7 +28,7 @@ test('PDF import: Claude reads the file, entries come back for review, then bulk
   assert.equal(r.status, 200, JSON.stringify(r.data));
   assert.equal(sent[0].messages[0].content[0].type, 'document');
   assert.equal(sent[0].messages[0].content[0].source.media_type, 'application/pdf');
-  assert.equal(sent[0].tool_choice.name, 'extract_events');
+  assert.equal(sent[0].tools[0].name, 'extract_events');
   const ev = r.data.events;
   assert.equal(ev.length, 4, 'bad date dropped, duplicate removed');
   const wb = ev.find((e) => e.title === 'Winter break');

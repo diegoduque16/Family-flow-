@@ -10,7 +10,7 @@ import { searchPlaces } from './places.js';
 import { listVisible } from '../lib/audience.js';
 
 const DEFAULT_MODEL = 'claude-sonnet-5-5';
-const FALLBACK_MODELS = ['claude-sonnet-4-5', 'claude-3-5-haiku-latest'];
+const FALLBACK_MODELS = ['claude-opus-5-5', 'claude-haiku-5-5'];
 const MAX_ROUNDS = 5;
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 

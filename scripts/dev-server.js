@@ -53,7 +53,7 @@ if (process.env.MOCK_AI) {
   env.__aiFetch = async (url, init) => {
     if (String(url) !== 'https://api.anthropic.com/v1/messages') return fetch(url, init);
     const body = JSON.parse(init.body);
-    if (body.tool_choice && body.tool_choice.name === 'extract_events') {
+    if (body.tools && body.tools.some((t) => t.name === 'extract_events')) {
       const y = new Date().getUTCFullYear() + (new Date().getUTCMonth() > 9 ? 1 : 0);
       return Response.json({ stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'x1', name: 'extract_events', input: { summary: 'Spring soccer schedule for the Tigers (3 games and a tournament).', events: [
         { title: 'Soccer game vs Eagles', date: `${y}-03-14`, start_time: '09:00', end_time: '10:30', location: 'Riverside Park Field 2', who: 'Kiddo' },
