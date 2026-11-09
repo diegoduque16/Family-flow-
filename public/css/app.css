@@ -52,7 +52,7 @@ h1, h2, h3 { margin: 0; line-height: 1.2; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ---------- shell ---------- */
-.shell { min-height: 100vh; padding-bottom: calc(var(--tab-h) + var(--safe-b) + 24px); }
+.shell { min-height: 100vh; padding-bottom: calc(var(--tab-h) + var(--safe-b) + 96px); }
 .topbar {
   position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--bg) 88%, transparent);
   backdrop-filter: saturate(1.4) blur(12px); -webkit-backdrop-filter: saturate(1.4) blur(12px);
