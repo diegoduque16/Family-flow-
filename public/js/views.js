@@ -4,6 +4,7 @@ import { api, state, occurrences, todayStr, nowLocal, membersList, member, lists
 import { openEventDetail, openEventEditor, openTaskEditor, toggleTask, taskDueLabel, errorText, describeRrule, openWhoAmI } from './editors.js';
 import { utcToLocal } from './time.js';
 import { eventIcon } from './icons.js';
+import { installBanner } from './install.js';
 
 const withIcon = (ev) => { const ic = eventIcon(ev); return ic ? `${ic} ${ev.title}` : ev.title; };
 
@@ -92,6 +93,7 @@ export function TodayView() {
     statusBanner(),
     h('p', { class: 'muted', style: { margin: '6px 0 0', fontWeight: 600 } }, fmtDay(today)),
     h('h2', { class: 'hello' }, `${greet}, ${nm}`),
+    installBanner(),
     !state.me.memberId && membersList().length ? h('button', { type: 'button', class: 'banner info', style: { width: '100%', textAlign: 'left', border: 0, cursor: 'pointer' }, onclick: () => openWhoAmI() }, icon('people'), h('span', null, h('b', null, 'Which family profile is you?'), h('br'), 'Tap to choose (for example Mom or Dad) so events for you and family alerts reach you.')) : null,
     state.proposalsCount ? h('a', { class: 'banner info', href: '#/inbox', style: { textDecoration: 'none' } }, icon('assistant'), `${state.proposalsCount} suggestion${state.proposalsCount > 1 ? 's' : ''} from the assistant waiting for you to confirm`) : null,
     next ? h('button', { type: 'button', class: 'next-up', onclick: () => openEventDetail(next.ev, next) },

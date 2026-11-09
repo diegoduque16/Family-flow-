@@ -21,6 +21,7 @@ export function MoreView() {
       item('#/more/people', 'user', 'People & invites', 'Who can sign in to this household'),
       item('#/more/places', 'pin', 'Saved places', 'Home, school, favourite spots'))),
     h('div', { class: 'card' }, h('ul', { class: 'list' },
+      h('li', null, h('button', { type: 'button', class: 'item', style: { width: '100%', background: 'none', border: 0, textAlign: 'left' }, onclick: () => import('./setup.js').then((m) => m.openSetup()) }, h('span', { class: 'icon-btn', style: { background: 'var(--accent-soft)', color: 'var(--accent)' } }, icon('assistant')), h('span', { class: 'grow' }, h('div', { class: 'title' }, 'Setup guide'), h('div', { class: 'meta' }, 'Connect calendars, add family, turn on alerts')), icon('chev', 'chev'))),
       item('#/more/notifications', 'bell', 'Notifications', 'Reminders and family updates'),
       item('#/more/sync', 'link', 'Connected calendars', 'Google, Outlook, Apple — in and out'),
       item('#/more/household', 'home', 'Household', state.household ? `${state.household.name} · ${state.household.timezone}` : ''),
@@ -494,6 +495,7 @@ export function PlacesView(rerender) {
 
 // ---------- connected calendars (import + export) ----------
 const HOWTO = {
+  school: ['In your school app or website (ParentSquare, Google Classroom, the district site…), open the Calendar.', 'Look for Subscribe, Sync, iCal or “Add to calendar” and copy that link (it often starts with webcal://).', 'Paste it below. On iPhone, copy the link instead of tapping it, or your phone’s own Calendar app grabs it.'],
   google: ['On a computer, open calendar.google.com.', 'Click the gear (top right) → Settings.', 'On the left, under “Settings for my calendars”, click the calendar you want.',
     'Scroll to “Integrate calendar” and copy the “Secret address in iCal format”.', 'Paste it below. (Work or school Google accounts: your administrator may have turned this off.)'],
   outlook: ['Open outlook.com (or Outlook on the web for work) and go to the calendar.', 'Settings (gear) → Calendar → Shared calendars.', 'Under “Publish a calendar”, pick the calendar and “Can view all details”, then Publish.',
@@ -509,8 +511,8 @@ function timeAgoShort(ms) {
   const m = Math.round((Date.now() - ms) / 60000);
   return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`;
 }
-function addSourceSheet(provider, rerender) {
-  const url = h('input', { class: 'input', type: 'url', inputmode: 'url', autocapitalize: 'none', autocomplete: 'off', spellcheck: false, placeholder: provider === 'apple' ? 'webcal://…' : 'https://…', 'aria-label': 'Calendar link', autofocus: true });
+export function addSourceSheet(provider, rerender) {
+  const url = h('input', { class: 'input', type: 'url', inputmode: 'url', autocapitalize: 'none', autocomplete: 'off', spellcheck: false, placeholder: provider === 'apple' || provider === 'school' ? 'webcal://…' : 'https://…', 'aria-label': 'Calendar link', autofocus: true });
   const who = h('select', { class: 'input' }, h('option', { value: '' }, 'Nobody in particular'), membersList().map((m) => h('option', { value: m.id }, m.name)));
   if (state.me.memberId) who.value = state.me.memberId;
   const priv = h('input', { type: 'checkbox' });
@@ -518,7 +520,7 @@ function addSourceSheet(provider, rerender) {
   const btn = h('button', { type: 'button', class: 'btn primary' }, 'Connect');
   const steps = HOWTO[provider] || [];
   const s = sheet({
-    title: `Bring in ${provider === 'google' ? 'Google Calendar' : provider === 'outlook' ? 'Outlook' : provider === 'apple' ? 'Apple Calendar' : 'a calendar'}`, full: true,
+    title: `Bring in ${provider === 'google' ? 'Google Calendar' : provider === 'outlook' ? 'Outlook' : provider === 'apple' ? 'Apple Calendar' : provider === 'school' ? 'a school calendar' : 'a calendar'}`, full: true,
     body: h('div', null,
       steps.length ? h('ol', { class: 'muted small', style: { paddingLeft: '20px', margin: '10px 0' } }, steps.map((x) => h('li', { style: { margin: '4px 0' } }, x))) : h('p', { class: 'muted small' }, 'Paste a link to any calendar file (.ics or webcal://).'),
       h('label', { class: 'field' }, h('span', { class: 'label' }, 'Calendar link'), url, h('p', { class: 'hint' }, 'This link is private, like a password: only you will see it here.')),
@@ -565,7 +567,7 @@ function editSourceSheet(src, rerender) {
   });
 }
 
-function connectAccountSheet(provider) {
+export function connectAccountSheet(provider) {
   const who = h('select', { class: 'input' }, h('option', { value: '' }, 'Nobody in particular'), membersList().map((m) => h('option', { value: m.id }, m.name)));
   if (state.me.memberId) who.value = state.me.memberId;
   const priv = h('input', { type: 'checkbox' });

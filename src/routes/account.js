@@ -122,7 +122,12 @@ export async function me(req, env, ctx) {
     household: ctx.household ? { id: ctx.household.id, name: ctx.household.name, timezone: ctx.household.timezone } : null,
     role: ctx.role,
     memberId: ctx.memberId,
-    notifyActivity: ctx.household ? ((await one(db, 'SELECT notify_activity FROM memberships WHERE household_id = ? AND user_id = ?', ctx.household.id, ctx.user.id)) || {}).notify_activity !== 0 : true,
+    ...(await (async () => {
+      if (!ctx.household) return { notifyActivity: true, setupNeeded: false };
+      const ms = (await one(db, 'SELECT notify_activity, setup_done_at, created_at FROM memberships WHERE household_id = ? AND user_id = ?', ctx.household.id, ctx.user.id)) || {};
+      // The setup wizard is for people who join after it was introduced; earlier members can open it from More.
+      return { notifyActivity: ms.notify_activity !== 0, setupNeeded: !ms.setup_done_at && Number(ms.created_at || 0) > SETUP_WIZARD_SINCE };
+    })()),
     households,
     features: {
       assistant: !!env.ANTHROPIC_API_KEY,
@@ -135,10 +140,12 @@ export async function me(req, env, ctx) {
 }
 
 // Personal settings for this household (currently: family-activity alerts on/off).
+const SETUP_WIZARD_SINCE = Date.UTC(2026, 10, 9, 4, 0); // 8 Nov 2026, 11 PM New York
 export async function updatePrefs(req, env, ctx) {
-  const body = validate(v.object({ notifyActivity: v.boolean() }), await readJson(req));
-  await run(env.DB, 'UPDATE memberships SET notify_activity = ? WHERE household_id = ? AND user_id = ?', body.notifyActivity ? 1 : 0, ctx.household.id, ctx.user.id);
-  return json({ ok: true, notifyActivity: body.notifyActivity });
+  const body = validate(v.object({ notifyActivity: v.boolean().optional(), setupDone: v.boolean().optional() }), await readJson(req));
+  if (body.notifyActivity !== undefined) await run(env.DB, 'UPDATE memberships SET notify_activity = ? WHERE household_id = ? AND user_id = ?', body.notifyActivity ? 1 : 0, ctx.household.id, ctx.user.id);
+  if (body.setupDone !== undefined) await run(env.DB, 'UPDATE memberships SET setup_done_at = ? WHERE household_id = ? AND user_id = ?', body.setupDone ? now() : null, ctx.household.id, ctx.user.id);
+  return json({ ok: true, ...body });
 }
 
 export async function switchHousehold(req, env, ctx) {

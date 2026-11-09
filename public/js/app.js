@@ -207,6 +207,7 @@ export async function boot() {
   startAutoSync();
   refreshCounts();
   emitSignedIn();
+  import('./setup.js').then((m) => m.maybeStartSetup()).catch(() => {});
 }
 function emitSignedIn() { import('./store.js').then((m) => m.emit('signed-in')); }
 
