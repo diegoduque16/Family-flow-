@@ -155,6 +155,9 @@ export function CalendarView(rerender) {
   else { title = 'Agenda'; body = agendaView(cal.cursor < today ? cal.cursor : today, today, f); }
 
   const filterChips = filterChipsFor(rerender);
+  const range = cal.mode === 'month' ? [weekStart(`${cal.cursor.slice(0, 7)}-01`), 42] : cal.mode === 'week' ? [weekStart(cal.cursor), 7]
+    : cal.mode === 'day' ? [cal.cursor, 1] : [cal.cursor < today ? cal.cursor : today, 60];
+  const hidden = hiddenNote(range[0], addDaysStr(range[0], range[1]), f, rerender);
 
   return h('div', { class: 'page' },
     statusBanner(),
@@ -165,7 +168,20 @@ export function CalendarView(rerender) {
       h('button', { type: 'button', class: 'btn sm', onclick: goToday }, 'Today'),
       h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Next', onclick: () => step(1) }, icon('right'))),
     filterChips,
+    hidden,
     body);
+}
+// Events the group/person filter is hiding in the range on screen, so a filter never makes events silently "disappear".
+function hiddenNote(from, to, f, rerender) {
+  if (!f) return null;
+  const shown = new Set(occurrences(from, to, f).map((o) => o.ev.id));
+  const missing = [...new Map(occurrences(from, to, null).filter((o) => !shown.has(o.ev.id) && !o.ev.holiday).map((o) => [o.ev.id, o.ev])).values()];
+  if (!missing.length) return null;
+  const g = cal.group && state.groups.get(cal.group);
+  const what = missing.length === 1 ? `“${missing[0].title}”` : `${missing.length} events`;
+  return h('div', { class: 'banner info', style: { alignItems: 'center' } },
+    h('span', { class: 'grow' }, `${what} ${missing.length === 1 ? 'is' : 'are'} hidden by ${g ? `the “${g.name}” view` : 'the people filter'}.`),
+    h('button', { type: 'button', class: 'btn sm', onclick: () => { cal.filter.clear(); cal.group = null; pref.set('calFilter', []); pref.set('calGroup', null); rerender(); } }, 'Show everyone'));
 }
 function modeSeg(setMode) {
   return h('div', { class: 'seg', role: 'group', 'aria-label': 'Calendar view' }, ['day', 'week', 'month', 'agenda', 'list'].map((m) =>
@@ -315,7 +331,8 @@ export function InboxView(rerender) {
     try {
       const [p, n] = await Promise.all([api('GET', '/api/proposals'), api('GET', '/api/notifications')]);
       const unread = n.notifications.filter((x) => !x.read);
-      root.replaceChildren(
+      // (replaceChildren would print a null child as the word "null", so empty parts are dropped)
+      root.replaceChildren(...[
         ...statusBanner(),
         p.proposals.length ? h('div', null, h('div', { class: 'section-title' }, 'To confirm'), h('div', { class: 'stack' }, p.proposals.map((pr) => proposalCard(pr, () => { refreshCounts(); rerender(); })))) : null,
         h('div', { class: 'section-title row' }, h('span', { class: 'grow' }, 'Reminders & updates'),
@@ -329,7 +346,7 @@ export function InboxView(rerender) {
           h('span', { class: 'dot', '--c': x.read ? 'transparent' : 'var(--accent)' }),
           h('span', { class: 'grow' }, h('div', { class: 'title', style: { fontWeight: x.read ? 500 : 700 } }, x.title), h('div', { class: 'meta' }, x.body || ''), h('div', { class: 'meta faint' }, new Date(x.createdAt).toLocaleString())),
           icon('chev', 'chev')))))) :
-          h('div', { class: 'card empty' }, h('div', { class: 'big' }, 'Nothing yet'), 'Reminders, and updates when someone in the family adds or changes an event or assigns you a task, show up here — and on your phone if notifications are on.'));
+          h('div', { class: 'card empty' }, h('div', { class: 'big' }, 'Nothing yet'), 'Reminders, and updates when someone in the family adds or changes an event or assigns you a task, show up here — and on your phone if notifications are on.')].filter(Boolean));
     } catch (e) {
       root.replaceChildren(...statusBanner(), h('div', { class: 'empty' }, h('div', { class: 'big' }, 'Inbox needs a connection'), errorText(e)));
     }
