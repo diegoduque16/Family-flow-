@@ -312,7 +312,11 @@ textarea.input { min-height: 84px; resize: vertical; }
 .colors { display: flex; flex-wrap: wrap; gap: 10px; }
 .swatch { width: 38px; height: 38px; border-radius: 50%; border: 3px solid transparent; background: var(--c); padding: 0; }
 .swatch[aria-checked="true"] { border-color: var(--ink); box-shadow: inset 0 0 0 2px var(--surface); }
-code.copy { display: block; background: var(--surface-2); padding: 10px 12px; border-radius: 10px; font-size: 13px; word-break: break-all; user-select: all; }
+code.copy { display: block; background: var(--surface-2); padding: 12px 14px; border-radius: 12px; font: 550 14px/1.3 var(--font); color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: all; }
+.msg-bubble { align-self: flex-end; max-width: 92%; margin-left: auto; background: var(--accent-soft); color: var(--ink); padding: 12px 15px; border-radius: 20px 20px 6px 20px; font: 400 15px/1.4 var(--font); user-select: all; }
+.msg-bubble p { margin: 0; }
+.msg-bubble p + p { margin-top: 6px; }
+.msg-link { color: var(--accent); font-weight: 600; word-break: break-all; }
 
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 .btn svg, .banner svg, .row > svg, .place-chip > svg, .item > svg { width: 20px; height: 20px; flex: none; }

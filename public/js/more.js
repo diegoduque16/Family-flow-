@@ -390,6 +390,11 @@ function sendButtons(text, title) {
       navigator.share ? h('button', { type: 'button', class: 'btn', onclick: () => navigator.share({ title, text }).catch(() => {}) }, icon('share'), 'More…') : h('a', { class: 'btn', href: `mailto:?subject=${encodeURIComponent(title)}&body=${enc}` }, '📧 Email')));
 }
 
+// Preview of the message as it will look when sent: a chat bubble, links highlighted.
+function msgBubble(text) {
+  return h('div', { class: 'msg-bubble', 'aria-label': 'Message preview' }, text.split('\n').map((line) =>
+    h('p', null, line.split(/(https?:\/\/\S+)/).map((part) => (/^https?:\/\//.test(part) ? h('span', { class: 'msg-link' }, part.replace(/^https?:\/\//, '').replace(/\/$/, '')) : part)))));
+}
 // For people who already have an account: the app's address plus how to sign in and install it.
 function sendAppLink(p) {
   const url = `${location.origin}/`;
@@ -403,7 +408,7 @@ function sendAppLink(p) {
     title: p ? `Send ${first || 'them'} the link` : 'Family Flow link',
     body: h('div', { class: 'stack', style: { padding: '8px 0' } },
       h('p', { class: 'muted' }, p ? `${first || 'They'} already ${p.name ? 'has' : 'have'} an account, so no new invitation is needed — just the app’s address.` : 'Share this with anyone in the family who already has an account.'),
-      h('code', { class: 'copy', style: { whiteSpace: 'pre-wrap' } }, text),
+      msgBubble(text),
       sendButtons(text, 'Family Flow'),
       h('p', { class: 'faint small', style: { margin: 0 } }, 'Forgot the password? Password reset by email isn’t set up yet — the owner can remove them and send a new invitation.')),
   });
