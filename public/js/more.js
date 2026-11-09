@@ -675,7 +675,13 @@ export function SyncView(rerender) {
             (s.mine || isOwner()) ? h('button', { type: 'button', class: 'icon-btn', 'aria-label': `Settings for ${s.name}`, onclick: () => editSourceSheet(s, rerender) }, icon('edit')) : null)))) :
             h('p', { class: 'muted small', style: { marginTop: 0 } }, 'See work, school or personal calendars next to your family’s plans. Overlaps are flagged automatically.'),
           canEdit() ? h('div', { class: 'stack', style: { marginTop: '10px' } },
-            f.googleCalendar ? h('button', { type: 'button', class: 'btn primary block', onclick: () => connectAccountSheet('google') }, provIcon('google'), 'Sign in with Google') : null,
+            f.googleCalendar ? (() => {
+              const hasGoogle = cs.sources.some((x) => x.mine && x.provider === 'google');
+              return [
+                h('button', { type: 'button', class: `btn ${hasGoogle ? '' : 'primary '}block`, onclick: () => connectAccountSheet('google') }, provIcon('google'), hasGoogle ? 'Add another Google account' : 'Connect Google Calendar'),
+                h('p', { class: 'faint small', style: { margin: '6px 0 0', textAlign: 'center' } }, hasGoogle ? 'Your Google accounts above are already connected. Use this only for a different account. Everyone else connects their own from their phone.' : 'Sign in once and your Google calendars stay in sync.'),
+              ];
+            })() : null,
             f.microsoftCalendar ? h('button', { type: 'button', class: 'btn primary block', onclick: () => connectAccountSheet('microsoft') }, provIcon('outlook'), 'Sign in with Microsoft (Outlook)') : null,
             h('details', { open: !(f.googleCalendar || f.microsoftCalendar) }, h('summary', { class: 'muted small', style: { padding: '8px 0' } }, f.googleCalendar || f.microsoftCalendar ? 'Other ways: paste a calendar link' : 'Connect with a calendar link'),
               h('div', { class: 'stack' },
