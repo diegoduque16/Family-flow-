@@ -108,6 +108,7 @@ export async function callClaude(env, body, { timeoutMs = 45000 } = {}) {
   const f = env.__fetch || fetch;
   const models = [env.ANTHROPIC_MODEL || DEFAULT_MODEL, ...FALLBACK_MODELS];
   let lastErr = null;
+  const errs = [];
   for (const model of models) {
     const res = await f('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -118,11 +119,12 @@ export async function callClaude(env, body, { timeoutMs = 45000 } = {}) {
     if (res.ok) return res.json();
     const text = await res.text();
     lastErr = `HTTP ${res.status}: ${text.slice(0, 300)}`;
+    errs.push(`${model} → ${lastErr}`);
     if (res.status === 404 || (res.status === 400 && /model/i.test(text))) continue; // try next model
     break;
   }
-  console.error('Claude call failed', lastErr);
-  throw new HttpError(502, 'ai_unavailable', 'The assistant is unavailable right now. You can still add things with the + button.', { detail: lastErr });
+  console.error('Claude call failed', errs.join(' | '));
+  throw new HttpError(502, 'ai_unavailable', 'The assistant is unavailable right now. You can still add things with the + button.', { detail: errs.join(' | ').slice(0, 1500) });
 }
 
 // Map names ("dad", "kiddo 1") to member ids.
