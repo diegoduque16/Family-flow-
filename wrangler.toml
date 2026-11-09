@@ -39,4 +39,6 @@ enabled = true
 # Secrets (set in the Cloudflare dashboard → Worker → Settings → Variables and Secrets, type "Secret"):
 #   ANTHROPIC_API_KEY   – required for the assistant
 #   GEOAPIFY_API_KEY    – recommended for address search (free tier 3,000 req/day); falls back to Photon without it
+#   CREDENTIALS_KEY     – long random string; turns on “Connect iCloud” (Apple ID + app-specific password)
+#   MS_CLIENT_ID / MS_CLIENT_SECRET, GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET – one-tap calendar sign-in
 # Optional: ANTHROPIC_MODEL to pin a model id.

@@ -5,6 +5,8 @@ import { HttpError, json, readJson, validate, v, uid, now, sha256, randomToken, 
 import { one, all, run, audit } from '../lib/db.js';
 import { requireRole } from '../lib/auth.js';
 import { applyInstances, importWindow } from './sources.js';
+import { icloudDiscover, icloudEvents } from '../lib/caldav.js';
+import { expandIcs } from '../lib/ics.js';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -26,9 +28,15 @@ export const PROVIDERS = {
     idKey: 'MS_CLIENT_ID', secretKey: 'MS_CLIENT_SECRET',
     extraAuth: { prompt: 'select_account', response_mode: 'query' },
   },
+  // Apple has no OAuth for calendars: Apple ID + app-specific password over CalDAV. The credentials are sealed with
+  // CREDENTIALS_KEY (a Cloudflare secret), the same way the OAuth refresh tokens are sealed with the client secrets.
+  icloud: { label: 'iCloud Calendar', secretKey: 'CREDENTIALS_KEY' },
 };
 
-export const configured = (env, p) => !!(env[PROVIDERS[p].idKey] && env[PROVIDERS[p].secretKey]);
+export const configured = (env, p) => {
+  const P = PROVIDERS[p];
+  return !!P && (P.idKey ? !!(env[P.idKey] && env[P.secretKey]) : !!env[P.secretKey]);
+};
 const redirectUri = (origin, p) => `${origin}/oauth/${p}/callback`;
 const getFetch = (env) => env.__fetch || fetch;
 
@@ -55,7 +63,7 @@ export async function openToken(env, provider, sealed) {
 // ---------- start ----------
 export async function startConnect(req, env, ctx, { provider }) {
   requireRole(ctx, ['owner', 'adult']);
-  if (!PROVIDERS[provider]) throw new HttpError(404, 'not_found', 'Unknown calendar provider.');
+  if (!PROVIDERS[provider] || !PROVIDERS[provider].authUrl) throw new HttpError(404, 'not_found', 'Unknown calendar provider.');
   if (!configured(env, provider)) throw new HttpError(503, 'not_configured', `Sign in with ${provider === 'google' ? 'Google' : 'Microsoft'} isn’t set up for this app yet. You can still connect with a calendar link.`);
   const body = validate(v.object({ memberId: v.string({ max: 60 }).nullable(), visibility: v.string({ oneOf: ['shared', 'private'] }).default('shared') }), await readJson(req));
   if (body.memberId && !(await one(env.DB, 'SELECT 1 FROM members WHERE id = ? AND household_id = ? AND deleted_at IS NULL', body.memberId, ctx.household.id))) {
@@ -83,7 +91,7 @@ const back = (origin, qs) => Response.redirect(`${origin}/#/more/sync?${qs}`, 30
 export async function oauthCallback(req, env, ctx, { provider }) {
   const url = new URL(req.url);
   const origin = url.origin;
-  if (!PROVIDERS[provider]) return back(origin, 'error=unknown');
+  if (!PROVIDERS[provider] || !PROVIDERS[provider].authUrl) return back(origin, 'error=unknown');
   const err = url.searchParams.get('error');
   if (err) return back(origin, `error=${encodeURIComponent(err === 'access_denied' ? 'denied' : err)}`);
   const state = url.searchParams.get('state') || '';
@@ -155,6 +163,7 @@ async function api(env, accessToken, url, headers = {}) {
 }
 
 export async function listCalendars(env, provider, accessToken) {
+  if (provider === 'icloud') return (await icloudDiscover(env, accessToken)).calendars;
   if (provider === 'google') {
     const d = await api(env, accessToken, 'https://www.googleapis.com/calendar/v3/users/me/calendarList?minAccessRole=reader&maxResults=100');
     return (d.items || []).map((c) => ({ id: c.id, name: c.summaryOverride || c.summary || c.id, primary: !!c.primary }));
@@ -214,15 +223,38 @@ async function accessTokenFor(env, src) {
   return t.access_token;
 }
 
+// iCloud returns raw iCalendar data (repeats not expanded), so it goes through the same parser as calendar links.
+async function icloudInstances(env, creds, calId, fromMs, toMs, tz) {
+  const out = [];
+  for (const r of await icloudEvents(env, creds, calId, fromMs, toMs)) {
+    const { instances } = expandIcs(r.ics, { fromMs, toMs, fallbackTz: tz });
+    for (const i of instances) out.push({ ...i, uid: `${calId}|${i.uid}` });
+  }
+  return out;
+}
+
+// What a sync needs to talk to the provider: a fresh access token (Google/Microsoft) or the Apple ID credentials.
+async function credentialFor(env, src) {
+  if (src.kind === 'icloud') {
+    const raw = await openToken(env, 'icloud', src.token_enc);
+    try { return JSON.parse(raw); } catch { throw new HttpError(401, 'reconnect', 'This calendar needs to be reconnected.'); }
+  }
+  return accessTokenFor(env, src);
+}
+
 export async function syncAccount(env, src, household, accessToken = null) {
   const t = now();
   try {
     if (!configured(env, src.kind)) throw new HttpError(503, 'not_configured', 'Sign-in for this provider was switched off for the app.');
-    const token = accessToken || await accessTokenFor(env, src);
+    const token = accessToken || await credentialFor(env, src);
     const { fromMs, toMs } = importWindow(t);
     const cals = JSON.parse(src.calendars || '[]');
     const instances = [];
-    for (const c of cals) instances.push(...(src.kind === 'google' ? await googleInstances(env, token, c.id, fromMs, toMs) : await graphInstances(env, token, c.id, fromMs, toMs)));
+    for (const c of cals) {
+      instances.push(...(src.kind === 'google' ? await googleInstances(env, token, c.id, fromMs, toMs)
+        : src.kind === 'icloud' ? await icloudInstances(env, token, c.id, fromMs, toMs, household.timezone)
+          : await graphInstances(env, token, c.id, fromMs, toMs)));
+    }
     const r = await applyInstances(env.DB, src, household, instances.slice(0, 4000));
     await run(env.DB, "UPDATE calendar_sources SET last_sync_at = ?, last_ok_at = ?, last_status = 'ok', last_error = ?, event_count = ? WHERE id = ?",
       t, t, instances.length > 4000 ? 'Very large calendar: only the first 4,000 events in range were imported.' : null, r.total, src.id);
@@ -243,16 +275,60 @@ async function loadAccount(env, ctx, id) {
 }
 export async function accountCalendars(req, env, ctx, { id }) {
   const s = await loadAccount(env, ctx, id);
-  const token = await accessTokenFor(env, s);
+  const token = await credentialFor(env, s);
   const all = await listCalendars(env, s.kind, token);
   const sel = new Set(JSON.parse(s.calendars || '[]').map((c) => c.id));
   return json({ calendars: all.map((c) => ({ ...c, selected: sel.has(c.id) })) });
 }
 export async function setAccountCalendars(req, env, ctx, { id }) {
   const s = await loadAccount(env, ctx, id);
-  const body = validate(v.object({ calendars: v.array(v.object({ id: v.string({ min: 1, max: 300 }), name: v.string({ max: 200 }).default('') }), { max: 25 }) }), await readJson(req));
+  const body = validate(v.object({ calendars: v.array(v.object({ id: v.string({ min: 1, max: 500 }), name: v.string({ max: 200 }).default('') }), { max: 25 }) }), await readJson(req));
+  if (s.kind === 'icloud') {
+    // Calendar ids are URLs the Apple ID password is sent to, so only accept ones iCloud itself listed.
+    const known = new Set((await listCalendars(env, 'icloud', await credentialFor(env, s))).map((c) => c.id));
+    if (body.calendars.some((c) => !known.has(c.id))) throw new HttpError(422, 'invalid', 'One of those calendars no longer exists in iCloud. Close this and try again.');
+  }
   await run(env.DB, 'UPDATE calendar_sources SET calendars = ? WHERE id = ?', JSON.stringify(body.calendars), id);
   const household = await one(env.DB, 'SELECT * FROM households WHERE id = ?', s.household_id);
   const r = await syncAccount(env, { ...s, calendars: JSON.stringify(body.calendars) }, household);
   return json({ ok: r.ok, sync: r });
+}
+
+// ---------- iCloud: Apple ID + app-specific password ----------
+export async function connectIcloud(req, env, ctx) {
+  requireRole(ctx, ['owner', 'adult']);
+  if (!configured(env, 'icloud')) throw new HttpError(503, 'not_configured', 'Signing in with an Apple ID isn’t set up for this app yet. You can still connect with an iCloud calendar link.');
+  const body = validate(v.object({
+    appleId: v.string({ min: 3, max: 200 }),
+    password: v.string({ min: 8, max: 100 }),
+    memberId: v.string({ max: 60 }).nullable(),
+    visibility: v.string({ oneOf: ['shared', 'private'] }).default('shared'),
+  }), await readJson(req));
+  const appleId = body.appleId.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(appleId)) throw new HttpError(422, 'invalid', 'Enter the email address of the Apple ID.', { field: 'appleId' });
+  const password = body.password.replace(/\s+/g, '');
+  if (body.memberId && !(await one(env.DB, 'SELECT 1 FROM members WHERE id = ? AND household_id = ? AND deleted_at IS NULL', body.memberId, ctx.household.id))) {
+    throw new HttpError(422, 'invalid', 'That family profile doesn’t exist.', { field: 'memberId' });
+  }
+  const creds = { u: appleId, p: password };
+  const { calendars } = await icloudDiscover(env, creds, { connecting: true }); // real check before saving
+  if (!calendars.length) throw new HttpError(422, 'no_calendars', 'That Apple ID has no iCloud calendars. Turn on Calendars in iPhone Settings → [your name] → iCloud, then try again.');
+  const fakeUrl = `caldav:icloud:${appleId}`;
+  const sealed = await sealToken(env, 'icloud', JSON.stringify(creds));
+  let src = await one(env.DB, 'SELECT * FROM calendar_sources WHERE household_id = ? AND url = ? AND deleted_at IS NULL', ctx.household.id, fakeUrl);
+  if (src) {
+    if (src.owner_user_id !== ctx.user.id) throw new HttpError(409, 'duplicate', 'Someone else in your family already connected this Apple ID.');
+    await run(env.DB, 'UPDATE calendar_sources SET token_enc = ?, last_status = NULL, last_error = NULL WHERE id = ?', sealed, src.id);
+  } else {
+    const n = await one(env.DB, 'SELECT COUNT(*) AS n FROM calendar_sources WHERE household_id = ? AND deleted_at IS NULL', ctx.household.id);
+    if (n.n >= 20) throw new HttpError(422, 'limit', 'A household can import up to 20 calendars.');
+    const id = uid('cs_');
+    await run(env.DB, `INSERT INTO calendar_sources (id, household_id, owner_user_id, name, provider, url, member_id, visibility, kind, account_email, token_enc, calendars, created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, ctx.household.id, ctx.user.id, `iCloud · ${appleId}`.slice(0, 60), 'apple', fakeUrl, body.memberId ?? null, body.visibility,
+    'icloud', appleId, sealed, JSON.stringify(calendars.map(({ id: cid, name }) => ({ id: cid, name }))), now());
+    src = await one(env.DB, 'SELECT * FROM calendar_sources WHERE id = ?', id);
+  }
+  const r = await syncAccount(env, { ...src, token_enc: sealed }, ctx.household, creds);
+  await audit(env.DB, { householdId: ctx.household.id, userId: ctx.user.id, action: 'source.connect', refType: 'source', refId: src.id, detail: { provider: 'icloud' } });
+  return json({ sourceId: src.id, imported: r.total || 0, ok: r.ok, error: r.error || null }, 201);
 }

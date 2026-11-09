@@ -2,7 +2,7 @@
 // Opens automatically once for people who just joined (server says setupNeeded); reopen any time from More → Setup guide.
 import { h, icon, sheet, toast, avatarEl } from './ui.js';
 import { api, state, membersList, mutate, sync } from './store.js';
-import { addSourceSheet, connectAccountSheet } from './more.js';
+import { addSourceSheet, connectAccountSheet, connectIcloudSheet } from './more.js';
 import { openImportDocument, errorText } from './editors.js';
 import { openInstallHelp, isInstalled } from './install.js';
 
@@ -53,7 +53,8 @@ export function openSetup() {
           : tile('🟦', 'Google Calendar', has('google') ? 'Connected' : 'Paste your private calendar link', () => addSourceSheet('google', refresh), has('google')),
         f.microsoftCalendar ? tile('📨', 'Outlook', has('outlook') ? 'Connected' : 'Sign in with Microsoft', () => connectAccountSheet('microsoft'), has('outlook'))
           : tile('📨', 'Outlook', has('outlook') ? 'Connected' : 'Paste your published calendar link', () => addSourceSheet('outlook', refresh), has('outlook')),
-        tile('🍎', 'Apple / iPhone Calendar', has('apple') ? 'Connected' : 'Share an iCloud calendar link', () => addSourceSheet('apple', refresh), has('apple')),
+        f.icloudCalendar ? tile('🍎', 'Apple / iPhone Calendar', has('apple') ? 'Connected' : 'Sign in with your Apple ID', () => connectIcloudSheet(refresh), has('apple'))
+          : tile('🍎', 'Apple / iPhone Calendar', has('apple') ? 'Connected' : 'Share an iCloud calendar link', () => addSourceSheet('apple', refresh), has('apple')),
         f.assistant ? tile('📄', 'A PDF or photo of a schedule', 'School year calendar, game schedule, a flyer…', () => openImportDocument()) : null),
       h('p', { class: 'faint small', style: { marginTop: '12px' } }, 'Calendars you bring in are read-only and refresh automatically. You can manage them later in More → Connected calendars.'));
   }

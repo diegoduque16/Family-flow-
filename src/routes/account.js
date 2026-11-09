@@ -136,6 +136,7 @@ export async function me(req, env, ctx) {
       places: !!env.GEOAPIFY_API_KEY,
       googleCalendar: !!(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET),
       microsoftCalendar: !!(env.MS_CLIENT_ID && env.MS_CLIENT_SECRET),
+      icloudCalendar: !!env.CREDENTIALS_KEY,
     },
   });
 }

@@ -68,6 +68,7 @@ const ROUTES = [
   ['POST', '/api/calendar-sources/:id/sync', sources.syncSourceNow, 'household'],
   ['GET', '/api/calendar-sources/:id/calendars', accounts.accountCalendars, 'household'],
   ['POST', '/api/calendar-sources/:id/calendars', accounts.setAccountCalendars, 'household'],
+  ['POST', '/api/calendar-accounts/icloud/connect', accounts.connectIcloud, 'household'],
   ['POST', '/api/calendar-accounts/:provider/start', accounts.startConnect, 'household'],
   ['GET', '/oauth/:provider/callback', accounts.oauthCallback, 'optional'],
 

@@ -607,6 +607,45 @@ export function connectAccountSheet(provider) {
   });
   go.addEventListener('click', () => { go.disabled = true; startAccount(provider, { memberId: who.value || null, visibility: priv.checked ? 'private' : 'shared' }).finally(() => { go.disabled = false; }); });
 }
+// iCloud: Apple has no "Sign in with Apple" for calendars, so it's Apple ID + an app-specific password.
+export function connectIcloudSheet(onDone, prefill = {}) {
+  const who = h('select', { class: 'input' }, h('option', { value: '' }, 'Nobody in particular'), membersList().map((m) => h('option', { value: m.id }, m.name)));
+  who.value = prefill.memberId !== undefined ? (prefill.memberId || '') : (state.me.memberId || '');
+  const priv = h('input', { type: 'checkbox', checked: prefill.visibility === 'private' });
+  const appleId = h('input', { class: 'input', type: 'email', inputmode: 'email', autocapitalize: 'none', autocomplete: 'username', spellcheck: false, placeholder: 'name@icloud.com', value: prefill.appleId || '', 'aria-label': 'Apple ID email' });
+  const pw = h('input', { class: 'input', type: 'password', autocapitalize: 'none', autocomplete: 'off', spellcheck: false, placeholder: 'xxxx-xxxx-xxxx-xxxx', 'aria-label': 'App-specific password' });
+  const err = h('div');
+  const go = h('button', { type: 'button', class: 'btn primary' }, prefill.appleId ? 'Reconnect' : 'Connect');
+  const s = sheet({
+    title: 'Connect iCloud Calendar', full: true,
+    body: h('div', null,
+      h('p', { class: 'muted small', style: { marginTop: 0 } }, 'Apple asks apps to use a separate “app-specific” password, so Family Flow never gets your real Apple password. It takes about a minute:'),
+      h('ol', { class: 'muted small', style: { paddingLeft: '20px', margin: '10px 0' } },
+        h('li', { style: { margin: '4px 0' } }, 'Open ', h('a', { href: 'https://account.apple.com/account/manage/section/security', target: '_blank', rel: 'noopener' }, 'account.apple.com'), ' and sign in.'),
+        h('li', { style: { margin: '4px 0' } }, 'Go to Sign-In and Security → App-Specific Passwords → +, and name it “Family Flow”.'),
+        h('li', { style: { margin: '4px 0' } }, 'Copy the password Apple shows (four groups of letters) and paste it below.')),
+      h('label', { class: 'field' }, h('span', { class: 'label' }, 'Apple ID email'), appleId),
+      h('label', { class: 'field' }, h('span', { class: 'label' }, 'App-specific password'), pw, h('p', { class: 'hint' }, 'Stored encrypted. You can switch it off any time at account.apple.com.')),
+      h('label', { class: 'field' }, h('span', { class: 'label' }, 'Whose calendar is it?'), who),
+      h('label', { class: 'switch field' }, h('span', null, h('span', { style: { fontWeight: 650 } }, 'Only visible to me'), h('span', { class: 'hint', style: { display: 'block', margin: 0 } }, 'Off: the whole family sees these events')), priv),
+      h('p', { class: 'hint' }, 'Read-only: all your iCloud calendars show in Family Flow and update about every 15 minutes. You can choose which ones afterwards.'),
+      err),
+    foot: [h('button', { type: 'button', class: 'btn', onclick: () => s.close() }, 'Cancel'), go],
+  });
+  go.addEventListener('click', async () => {
+    if (!appleId.value.trim() || !pw.value.trim()) { err.replaceChildren(h('p', { class: 'err' }, 'Enter your Apple ID email and the app-specific password.')); return; }
+    go.disabled = true; go.textContent = 'Connecting to iCloud…'; err.replaceChildren();
+    try {
+      const r = await api('POST', '/api/calendar-accounts/icloud/connect', { appleId: appleId.value, password: pw.value, memberId: who.value || null, visibility: priv.checked ? 'private' : 'shared' });
+      s.close();
+      toast(r.ok ? `iCloud connected — ${r.imported} events imported` : r.error, { bad: !r.ok, ms: r.ok ? 4000 : 8000 });
+      await sync();
+      if (onDone) onDone(r);
+    } catch (e) {
+      err.replaceChildren(h('p', { class: 'err' }, errorText(e)));
+    } finally { go.disabled = false; go.textContent = prefill.appleId ? 'Reconnect' : 'Connect'; }
+  });
+}
 async function startAccount(provider, body) {
   try {
     const r = await api('POST', `/api/calendar-accounts/${provider}/start`, body);
@@ -667,7 +706,9 @@ export function SyncView(rerender) {
               s.kind !== 'ics' && s.calendars ? h('div', { class: 'meta' }, `Showing: ${s.calendars.map((x) => x.name).join(', ') || 'no calendars'}`) : null,
               s.kind !== 'ics' && s.mine ? h('div', { class: 'row', style: { gap: '6px', marginTop: '6px' } },
                 h('button', { type: 'button', class: 'btn sm', onclick: () => chooseCalendarsSheet(s, rerender) }, 'Choose calendars'),
-                s.status === 'error' ? h('button', { type: 'button', class: 'btn sm primary', onclick: () => startAccount(s.kind, { memberId: s.memberId, visibility: s.visibility }) }, 'Reconnect') : null) : null),
+                s.status === 'error' ? h('button', { type: 'button', class: 'btn sm primary', onclick: () => (s.kind === 'icloud'
+                  ? connectIcloudSheet(rerender, { appleId: s.accountEmail, memberId: s.memberId, visibility: s.visibility })
+                  : startAccount(s.kind, { memberId: s.memberId, visibility: s.visibility })) }, 'Reconnect') : null) : null),
             h('button', { type: 'button', class: 'icon-btn', 'aria-label': `Update ${s.name} now`, onclick: async (e) => {
               e.currentTarget.disabled = true;
               try { const r = await api('POST', `/api/calendar-sources/${s.id}/sync`, {}); toast(r.sync.ok ? `${s.name} is up to date` : r.sync.error, { bad: !r.sync.ok }); await sync(); rerender(); } catch (er) { toast(errorText(er), { bad: true }); }
@@ -683,7 +724,8 @@ export function SyncView(rerender) {
               ];
             })() : null,
             f.microsoftCalendar ? h('button', { type: 'button', class: 'btn primary block', onclick: () => connectAccountSheet('microsoft') }, provIcon('outlook'), 'Sign in with Microsoft (Outlook)') : null,
-            h('details', { open: !(f.googleCalendar || f.microsoftCalendar) }, h('summary', { class: 'muted small', style: { padding: '8px 0' } }, f.googleCalendar || f.microsoftCalendar ? 'Other ways: paste a calendar link' : 'Connect with a calendar link'),
+            f.icloudCalendar ? h('button', { type: 'button', class: 'btn primary block', onclick: () => connectIcloudSheet(() => rerender()) }, provIcon('apple'), 'Connect iCloud (Apple Calendar)') : null,
+            h('details', { open: !(f.googleCalendar || f.microsoftCalendar || f.icloudCalendar) }, h('summary', { class: 'muted small', style: { padding: '8px 0' } }, f.googleCalendar || f.microsoftCalendar || f.icloudCalendar ? 'Other ways: paste a calendar link' : 'Connect with a calendar link'),
               h('div', { class: 'stack' },
                 h('button', { type: 'button', class: 'btn block', onclick: () => addSourceSheet('google', rerender) }, 'Google Calendar link'),
                 h('button', { type: 'button', class: 'btn block', onclick: () => addSourceSheet('outlook', rerender) }, 'Outlook / Microsoft 365 link'),

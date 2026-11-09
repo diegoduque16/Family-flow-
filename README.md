@@ -2,7 +2,7 @@
 
 A shared family calendar, task lists and AI assistant. Mobile-first web app (installable on phones), running on Cloudflare.
 
-**Phase 1 status:** built and tested locally (30 automated server tests + a 13-step browser test on an iPhone-sized screen). Not deployed yet; see "Deploy" below.
+**Phase 1 status:** built and tested locally (automated server tests + a 13-step browser test on an iPhone-sized screen). Not deployed yet; see "Deploy" below.
 
 ## What's in Phase 1
 
@@ -18,6 +18,7 @@ A shared family calendar, task lists and AI assistant. Mobile-first web app (ins
 | Offline | App opens offline from a cached copy; changes made offline are queued and sent when back online; if someone else changed the same item, the server copy wins and you're told. The server database is the source of truth. | e2e (goes offline, adds a task, reconnects, checks the server) |
 | Import Google / Outlook / Apple | Paste the calendar's private iCal link (step-by-step instructions in the app). Events appear in every view, coloured by the chosen family member, flagged in overlap checks, visible to the assistant, read-only. Refreshed every 15 min by the cron job (and "update now"); changed and deleted events are picked up; a revoked link shows a clear error and Diagnostics turns amber. Handles time zones incl. Outlook's Windows zone names, all-day events, repeats incl. "2nd Tuesday" / "last Friday", skipped and moved occurrences. Private imports visible only to whoever added them. | `test/import.test.js` (Google- and Outlook-shaped feeds), e2e |
 | Sign in with Google / Microsoft | One tap, read-only (OAuth 2.0 + PKCE). Pick which calendars to show; refreshed every 15 min; refresh tokens stored encrypted with a key derived from the provider's client secret; revoked access shows Reconnect. Needs the app registered once with Google Cloud and Microsoft Entra (secrets above). | `test/oauth.test.js` (simulated Google + Microsoft), e2e (redirect) |
+| Sign in with Apple ID (iCloud) | Apple has no “Sign in” for calendars, so people enter their Apple ID and an **app-specific password** (made at account.apple.com; step-by-step in the app). Read-only CalDAV: every iCloud calendar that holds events is found automatically (Reminders lists skipped), choose which to show; repeats, time zones and changes handled by the same parser as calendar links; refreshed every 15 min. Credentials sealed with AES-GCM using the `CREDENTIALS_KEY` secret and only ever sent to icloud.com. A revoked password shows Reconnect. Switches on when `CREDENTIALS_KEY` is set. | `test/icloud.test.js` (simulated iCloud incl. its partition-host redirect). **Not yet tried against real iCloud.** |
 | Show Family Flow elsewhere | Private subscription link (ICS) for Apple / Google / Outlook, one-way, shared Family Flow events only (imported ones are left out to avoid duplicates). Link can be rotated. | `test/api.test.js` |
 | Backups | Daily gzip of all tables to R2, read back to verify, 35 days kept. D1 also has its own 30-day point-in-time restore. | `test/ops.test.js` restores the backup and checks the data |
 | Family groups | Groups inside a household (e.g. Nuclear / Extended family). Events can be shared with everyone, one group, or only me; lists can be limited to a group you're in. Non-members never receive those items in sync, exports, the assistant, reminders or the shared calendar feed. Deleting a group shares its items with everyone. | `test/groups.test.js` |
@@ -58,6 +59,8 @@ A shared family calendar, task lists and AI assistant. Mobile-first web app (ins
 5. Worker → Settings → Variables and Secrets → add **Secrets** (type them yourself):
    - `ANTHROPIC_API_KEY` (console.anthropic.com → API keys)
    - `GEOAPIFY_API_KEY` (myprojects.geoapify.com → new project → API key). Optional but recommended.
+   - `CREDENTIALS_KEY`: any long random string (40+ characters, e.g. from a password manager). Turns on “Connect iCloud”. Don’t change it later, or everyone has to reconnect iCloud.
+   - `MS_CLIENT_ID` + `MS_CLIENT_SECRET`: turns on “Sign in with Microsoft”. entra.microsoft.com → App registrations → New registration → “Accounts in any organizational directory and personal Microsoft accounts”, redirect (Web) `https://<your-worker>/oauth/microsoft/callback`; API permissions → Microsoft Graph → delegated `Calendars.Read`, `User.Read`, `offline_access`; Certificates & secrets → New client secret (copy the *Value*).
 6. Open the `*.workers.dev` URL, create your family, then More → Diagnostics. Everything should be OK except "cron" and "backups", which turn green within a minute and after the first night.
 
 `ADMIN_EMAILS` in `wrangler.toml` controls who can run manual backups and see diagnostics for every household.
@@ -67,7 +70,7 @@ A shared family calendar, task lists and AI assistant. Mobile-first web app (ins
 Requires Node 22+. No npm packages needed.
 
 ```sh
-npm test                                   # 30 server tests (node:test, SQLite stand-in for D1)
+npm test                                   # server tests (node:test, SQLite stand-in for D1)
 MOCK_AI=1 MOCK_PLACES=1 MOCK_VOICE="milk, eggs and bread" node scripts/dev-server.js 8787 /tmp/dev.sqlite
 node e2e/smoke.mjs http://localhost:8787   # browser test (needs Playwright installed)
 ```
