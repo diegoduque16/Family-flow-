@@ -245,6 +245,12 @@ export function occurrences(fromDate, toDate, filter = null) {
   const toMs = localToUtc(toDate, z);
   const out = [];
   for (const e of state.events.values()) {
+    if (filter && filter.group) {
+      // Group view: events shared with this group, events for its members, and whole-family events without a group.
+      const g = state.groups.get(filter.group);
+      const inGroup = e.groupId === filter.group || (e.assignees || []).some((a) => g && g.memberIds.includes(a)) || (!e.groupId && !(e.assignees || []).length);
+      if (!inGroup) continue;
+    }
     if (filter && filter.size && !(e.assignees || []).some((a) => filter.has(a)) && !(filter.has('__none') && !(e.assignees || []).length)) continue;
     const end = e.rrule ? (e.seriesEndUtc ?? null) : e.endUtc;
     if (e.startUtc >= toMs || (end !== null && end <= fromMs)) continue;

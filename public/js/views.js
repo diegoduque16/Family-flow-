@@ -1,6 +1,6 @@
 // Main screens: Today, Calendar, Inbox, Assistant.
 import { h, icon, toast, fmtDay, fmtDayShort, fmtMonth, fmtTime, fmtRange, fmtWeekday, relDay, addDaysStr, sheet } from './ui.js';
-import { api, state, occurrences, todayStr, nowLocal, membersList, member, listsList, refreshCounts, emit, sync, tz, scroller } from './store.js';
+import { api, state, occurrences, todayStr, nowLocal, membersList, member, listsList, refreshCounts, emit, sync, tz, scroller, groupsList } from './store.js';
 import { openEventDetail, openEventEditor, openTaskEditor, toggleTask, taskDueLabel, errorText, describeRrule, openWhoAmI } from './editors.js';
 import { utcToLocal } from './time.js';
 import { eventIcon } from './icons.js';
@@ -118,13 +118,14 @@ function untilText(ms) {
 }
 
 // ---------- Calendar ----------
-const cal = { mode: pref.get('calMode', 'month'), cursor: null, selected: null, filter: new Set(pref.get('calFilter', [])) };
+const cal = { mode: pref.get('calMode', 'month'), cursor: null, selected: null, filter: new Set(pref.get('calFilter', [])), group: pref.get('calGroup', null) };
 
 export function CalendarView(rerender) {
   const today = todayStr();
   if (!cal.cursor) cal.cursor = today;
   if (!cal.selected) cal.selected = today;
   for (const id of [...cal.filter]) if (id !== '__none' && !state.members.has(id)) cal.filter.delete(id);
+  if (cal.group && !state.groups.get(cal.group)) cal.group = null;
   const setMode = (m) => { lastScrolledDay = null; cal.mode = m; pref.set('calMode', m); if (m !== 'month') cal.cursor = cal.selected; rerender(); };
   const step = (dir) => {
     if (cal.mode === 'month') { const d = new Date(`${cal.cursor.slice(0, 7)}-01T00:00:00Z`); d.setUTCMonth(d.getUTCMonth() + dir); cal.cursor = d.toISOString().slice(0, 10); }
@@ -134,7 +135,7 @@ export function CalendarView(rerender) {
     rerender();
   };
   const goToday = () => { cal.cursor = today; cal.selected = today; rerender(); };
-  const f = cal.filter.size ? cal.filter : null;
+  const f = calFilterSet();
 
   let title, body;
   if (cal.mode === 'month') { title = fmtMonth(cal.cursor); body = monthView(today, f, rerender); }
@@ -160,12 +161,30 @@ function modeSeg(setMode) {
   return h('div', { class: 'seg', role: 'group', 'aria-label': 'Calendar view' }, ['day', 'week', 'month', 'agenda', 'list'].map((m) =>
     h('button', { type: 'button', 'aria-pressed': String(cal.mode === m), onclick: () => setMode(m) }, m[0].toUpperCase() + m.slice(1))));
 }
+// The person filter plus the chosen family group (if any) as one Set that occurrences() understands.
+function calFilterSet() {
+  if (!cal.filter.size && !cal.group) return null;
+  const f = new Set(cal.filter);
+  if (cal.group) f.group = cal.group;
+  return f;
+}
+function groupPicker(rerender) {
+  const groups = groupsList();
+  if (!groups.length) return null;
+  const pick = (id) => { cal.group = id; pref.set('calGroup', id); const g = id && state.groups.get(id); if (g) { for (const m of [...cal.filter]) if (!g.memberIds.includes(m)) cal.filter.delete(m); pref.set('calFilter', [...cal.filter]); } rerender(); };
+  const sel = h('select', { class: 'gp-select', 'aria-label': 'Family group to show' },
+    h('option', { value: '' }, 'Whole family'), groups.map((g) => h('option', { value: g.id, selected: cal.group === g.id }, g.name)));
+  sel.addEventListener('change', () => pick(sel.value || null));
+  return h('label', { class: 'group-pick' }, h('span', { 'aria-hidden': 'true' }, '👥 Showing'), sel);
+}
 function filterChipsFor(rerender) {
-  return h('div', { class: 'filter', role: 'group', 'aria-label': 'Show events for' },
-    h('button', { type: 'button', class: 'chip', 'aria-pressed': String(!cal.filter.size), onclick: () => { cal.filter.clear(); pref.set('calFilter', []); rerender(); } }, 'Everyone'),
-    membersList().map((m) => h('button', { type: 'button', class: 'chip', '--c': m.color, 'aria-pressed': String(cal.filter.has(m.id)),
+  const g = cal.group && state.groups.get(cal.group);
+  const people = g ? membersList().filter((m) => g.memberIds.includes(m.id)) : membersList();
+  return [groupPicker(rerender), h('div', { class: 'filter', role: 'group', 'aria-label': 'Show events for' },
+    h('button', { type: 'button', class: 'chip', 'aria-pressed': String(!cal.filter.size), onclick: () => { cal.filter.clear(); pref.set('calFilter', []); rerender(); } }, g ? `All of ${g.name}` : 'Everyone'),
+    people.map((m) => h('button', { type: 'button', class: 'chip', '--c': m.color, 'aria-pressed': String(cal.filter.has(m.id)),
       onclick: () => { if (cal.filter.has(m.id)) cal.filter.delete(m.id); else cal.filter.add(m.id); pref.set('calFilter', [...cal.filter]); rerender(); } },
-    h('span', { class: 'dot', '--c': m.color }), m.name)));
+    h('span', { class: 'dot', '--c': m.color }), m.name)))];
 }
 function weekStart(date) { const d = new Date(`${date}T12:00:00Z`).getUTCDay(); return addDaysStr(date, -d); }
 
