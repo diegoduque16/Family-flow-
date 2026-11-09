@@ -362,6 +362,7 @@ export function PeopleView(rerender) {
             h('div', { class: 'row', style: { gap: '6px', flexWrap: 'wrap', marginTop: '8px', paddingLeft: '52px' } },
               me ? h('button', { type: 'button', class: 'btn sm', onclick: () => openWhoAmI(rerender) }, prof ? 'Change my profile' : 'Pick my profile') : null,
               !me ? h('button', { type: 'button', class: 'btn sm', onclick: () => sendAppLink(p) }, icon('share'), 'Send link') : null,
+              !isOwner() && !me && p.role === 'child' && canEdit() ? h('button', { type: 'button', class: 'btn sm', onclick: () => sendResetLink(p) }, '🔒 Reset password') : null,
               isOwner() ? h('button', { type: 'button', class: 'btn sm', onclick: () => personEditor(p, rerender) }, 'Edit') :
                 me ? h('button', { type: 'button', class: 'btn ghost sm', onclick: () => leave(p) }, 'Leave') : null));
         }))),
@@ -415,7 +416,7 @@ function sendAppLink(p) {
       h('p', { class: 'muted' }, p ? `${first || 'They'} already ${p.name ? 'has' : 'have'} an account, so no new invitation is needed — just the app’s address.` : 'Share this with anyone in the family who already has an account.'),
       msgBubble(text),
       sendButtons(text, 'Family Flow'),
-      h('p', { class: 'faint small', style: { margin: 0 } }, 'Forgot the password? Password reset by email isn’t set up yet — the owner can remove them and send a new invitation.')),
+      h('p', { class: 'faint small', style: { margin: 0 } }, 'Forgot their password? The owner can send a reset link from Edit next to their name.')),
   });
 }
 
@@ -455,7 +456,8 @@ function personEditor(p, rerender) {
   const err = h('div');
   const s = sheet({
     title: p.name,
-    body: h('div', null, p.email ? h('p', { class: 'muted', style: { marginTop: 0, overflowWrap: 'anywhere' } }, `🔑 Signs in as ${p.email}`) : null, h('label', { class: 'field' }, h('span', { class: 'label' }, 'Role'), role), h('label', { class: 'field' }, h('span', { class: 'label' }, 'Their family profile'), prof, h('p', { class: 'hint' }, 'Which profile is this person — e.g. Hayley is Mom. Each profile belongs to one login.')), err),
+    body: h('div', null, p.email ? h('p', { class: 'muted', style: { marginTop: 0, overflowWrap: 'anywhere' } }, `🔑 Signs in as ${p.email}`) : null,
+      p.id !== state.me.user.id ? h('button', { type: 'button', class: 'btn block', style: { marginBottom: '14px' }, onclick: () => { s.close(); sendResetLink(p); } }, '🔒 Send a password reset link') : null, h('label', { class: 'field' }, h('span', { class: 'label' }, 'Role'), role), h('label', { class: 'field' }, h('span', { class: 'label' }, 'Their family profile'), prof, h('p', { class: 'hint' }, 'Which profile is this person — e.g. Hayley is Mom. Each profile belongs to one login.')), err),
     foot: [
       h('button', { type: 'button', class: 'btn danger', onclick: async () => {
         if (!(await confirmDialog(p.id === state.me.user.id ? 'Leave household?' : `Remove ${p.name}?`, 'They will no longer be able to sign in to this household. Their events stay.', 'Remove', true))) return;
@@ -465,6 +467,20 @@ function personEditor(p, rerender) {
         try { await api('PATCH', `/api/household/people/${p.id}`, { role: role.value, memberId: prof.value || null }); s.close(); toast('Saved'); if (p.id === state.me.user.id) location.reload(); else rerender(); } catch (e) { err.replaceChildren(h('div', { class: 'banner bad' }, errorText(e))); }
       } }, 'Save')],
   });
+}
+async function sendResetLink(p) {
+  try {
+    const r = await api('POST', `/api/household/people/${p.id}/reset-link`);
+    const first = String(r.name || p.name || '').split(' ')[0];
+    const text = `${first ? `Hi ${first}! ` : ''}Here’s a link to choose a new Family Flow password: ${r.url}\nIt works once, for the next ${r.hours / 24} days.`;
+    sheet({
+      title: `Reset ${first || 'their'} password`,
+      body: h('div', { class: 'stack', style: { padding: '8px 0' } },
+        h('p', { class: 'muted', style: { margin: 0 } }, `Send this to ${first || 'them'} privately. They open it, pick a new password and are signed in. It works once and expires in ${r.hours / 24} days; their old password stops working.`),
+        msgBubble(text),
+        sendButtons(text, 'Family Flow password reset')),
+    });
+  } catch (e) { toast(errorText(e), { bad: true }); }
 }
 async function leave(p) {
   if (!(await confirmDialog('Leave household?', `You’ll lose access to ${state.household.name}.`, 'Leave', true))) return;

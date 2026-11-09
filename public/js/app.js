@@ -25,6 +25,45 @@ function route() {
   return { tab: parts[0] || 'today', sub: parts[1] || null, arg: parts[2] || null };
 }
 
+// ---------- password reset (link sent by the family owner) ----------
+async function resetScreen(token) {
+  const box = h('div', { class: 'box' }, h('img', { class: 'logo', src: '/icons/icon.svg', alt: '' }), h('h1', null, 'Choose a new password'), h('p', { class: 'lead' }, 'Checking your link…'));
+  app.replaceChildren(h('main', { class: 'auth' }, box));
+  let info;
+  try { info = await api('GET', `/api/password-reset/${encodeURIComponent(token)}`); }
+  catch (e) {
+    box.replaceChildren(h('img', { class: 'logo', src: '/icons/icon.svg', alt: '' }), h('h1', null, 'Link not working'), h('div', { class: 'banner bad' }, e.message), h('p', { class: 'muted' }, 'Ask the family owner to send a new reset link.'), h('a', { class: 'btn block', href: '#/login' }, 'Go to sign in'));
+    return;
+  }
+  const pw = h('input', { class: 'input', type: 'password', autocomplete: 'new-password', minlength: 8, required: true });
+  const pw2 = h('input', { class: 'input', type: 'password', autocomplete: 'new-password', minlength: 8, required: true });
+  const show = h('input', { type: 'checkbox' });
+  show.addEventListener('change', () => { pw.type = pw2.type = show.checked ? 'text' : 'password'; });
+  const err = h('div', { role: 'alert' });
+  const btn = h('button', { class: 'btn primary block', type: 'submit' }, 'Save and sign in');
+  const form = h('form', { novalidate: true, onsubmit: async (e) => {
+    e.preventDefault(); err.replaceChildren();
+    if (pw.value.length < 8) { err.replaceChildren(h('div', { class: 'banner bad' }, 'Use at least 8 characters.')); return; }
+    if (pw.value !== pw2.value) { err.replaceChildren(h('div', { class: 'banner bad' }, 'The two passwords don’t match.')); return; }
+    btn.disabled = true;
+    try {
+      await api('POST', `/api/password-reset/${encodeURIComponent(token)}`, { password: pw.value });
+      await clearLocalData();
+      location.hash = '#/today';
+      toast('Password changed — you’re signed in');
+      await boot();
+    } catch (e2) { err.replaceChildren(h('div', { class: 'banner bad' }, e2.message)); btn.disabled = false; }
+  } },
+  h('input', { type: 'email', autocomplete: 'username', value: info.email, hidden: true, readonly: true }),
+  h('label', { class: 'field' }, h('span', { class: 'label' }, 'New password'), pw, h('p', { class: 'hint' }, 'At least 8 characters.')),
+  h('label', { class: 'field' }, h('span', { class: 'label' }, 'Type it again'), pw2),
+  h('label', { class: 'row', style: { gap: '8px', margin: '0 0 14px' } }, show, h('span', { class: 'small' }, 'Show password')),
+  err, btn);
+  box.replaceChildren(h('img', { class: 'logo', src: '/icons/icon.svg', alt: '' }), h('h1', null, `Hi ${String(info.name || '').split(' ')[0]}!`),
+    h('p', { class: 'lead' }, `Choose a new password for ${info.email}.`), form);
+  setTimeout(() => pw.focus(), 30);
+}
+
 // ---------- auth screens ----------
 function authScreen(mode, invite) {
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -59,8 +98,15 @@ function authScreen(mode, invite) {
   field('Password', pw, mode === 'signup' ? 'At least 8 characters.' : null),
   mode === 'signup' && !invite ? field('Family name', hh, 'You can change this later and invite others.') : null,
   err, btn);
+  const forgot = mode === 'login' ? h('p', { style: { textAlign: 'center', margin: '4px 0 0' } }, h('button', { type: 'button', class: 'btn ghost sm', onclick: () => sheet({
+    title: 'Forgot your password?',
+    body: h('div', { class: 'stack', style: { padding: '6px 0 10px' } },
+      h('p', { style: { margin: 0 } }, 'Ask the person who set up your family’s Family Flow (the owner) to send you a reset link:'),
+      h('p', { class: 'muted', style: { margin: 0 } }, 'More → People & invites → Edit next to your name → “Send a password reset link”.'),
+      h('p', { class: 'muted small', style: { margin: 0 } }, 'Open the link they send, choose a new password, and you’re signed in.')),
+  }) }, 'Forgot password?')) : null;
   const other = mode === 'login'
-    ? h('p', { class: 'muted', style: { textAlign: 'center' } }, 'New here? ', h('a', { href: '#/signup' }, 'Create an account'))
+    ? [forgot, h('p', { class: 'muted', style: { textAlign: 'center' } }, 'New here? ', h('a', { href: '#/signup' }, 'Create an account'))]
     : h('p', { class: 'muted', style: { textAlign: 'center' } }, 'Already have an account? ', h('a', { href: invite ? `#/join/${invite.token}/login` : '#/login' }, 'Sign in'));
   app.replaceChildren(h('main', { class: 'auth' }, h('div', { class: 'box' },
     h('img', { class: 'logo', src: '/icons/icon.svg', alt: '' }),
@@ -170,6 +216,7 @@ async function startRecording() {
 // ---------- boot ----------
 export async function boot() {
   const r = route();
+  if (r.tab === 'reset' && r.sub) return resetScreen(r.sub);
   try {
     state.me = await api('GET', '/api/me');
   } catch (e) {
@@ -239,7 +286,7 @@ const flushPending = () => setTimeout(() => { if (pendingRender && !isBusy()) { 
 new MutationObserver(flushPending).observe(document.body, { childList: true });
 document.addEventListener('focusout', flushPending);
 
-window.addEventListener('hashchange', () => { closeAllSheets(); if (state.me) render(); else boot(); });
+window.addEventListener('hashchange', () => { closeAllSheets(); if (route().tab === 'reset') boot(); else if (state.me) render(); else boot(); });
 
 if ('serviceWorker' in navigator) {
   // When a new version of the app is deployed, the new service worker takes over; reload once so the new screens appear

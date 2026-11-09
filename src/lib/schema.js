@@ -14,6 +14,15 @@ const TABLES = [
      deleted_at INTEGER
    )`,
   'CREATE INDEX IF NOT EXISTS idx_family_groups_hh ON family_groups(household_id, seq)',
+  `CREATE TABLE IF NOT EXISTS password_resets (
+     id TEXT PRIMARY KEY,                     -- sha256 of the token in the link
+     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+     household_id TEXT,
+     created_by TEXT,
+     created_at INTEGER NOT NULL,
+     expires_at INTEGER NOT NULL,
+     used_at INTEGER
+   )`,
 ];
 
 // [table, column, definition]

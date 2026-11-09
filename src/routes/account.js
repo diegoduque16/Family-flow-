@@ -481,3 +481,49 @@ export async function changePassword(req, env, ctx) {
   await audit(db, { userId: ctx.user.id, action: 'user.password' });
   return json({ ok: true });
 }
+
+// ---------- password reset links (no email service needed: the owner sends the link by text/WhatsApp) ----------
+const RESET_HOURS = 48;
+export async function createResetLink(req, env, ctx, params) {
+  const db = env.DB;
+  const userId = params.userId;
+  const target = await one(db, 'SELECT u.id, u.name, u.email, m.role FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.household_id = ? AND m.user_id = ?', ctx.household.id, userId);
+  if (!target) throw new HttpError(404, 'not_found', 'That person isn’t in this household.');
+  // Owners can reset anyone here; other adults only children's logins.
+  if (ctx.role !== 'owner' && !(ctx.role === 'adult' && target.role === 'child')) throw new HttpError(403, 'forbidden', 'Only the household owner can send a password reset link.');
+  if (target.id === ctx.user.id) throw new HttpError(422, 'invalid', 'To change your own password use Account → Change password.');
+  await rateLimit(db, `reset:${ctx.user.id}`, 10, 3600);
+  const token = randomToken(24);
+  const t = now();
+  await run(db, 'UPDATE password_resets SET used_at = ? WHERE user_id = ? AND used_at IS NULL', t, target.id); // older links stop working
+  await run(db, 'INSERT INTO password_resets (id, user_id, household_id, created_by, created_at, expires_at) VALUES (?,?,?,?,?,?)',
+    await sha256(token), target.id, ctx.household.id, ctx.user.id, t, t + RESET_HOURS * 3600000);
+  await audit(db, { householdId: ctx.household.id, userId: ctx.user.id, action: 'user.reset_link', refType: 'user', refId: target.id });
+  const origin = new URL(req.url).origin;
+  return json({ url: `${origin}/#/reset/${token}`, name: target.name, email: target.email, hours: RESET_HOURS }, 201);
+}
+
+async function findReset(db, token) {
+  const r = await one(db, 'SELECT r.*, u.name, u.email FROM password_resets r JOIN users u ON u.id = r.user_id WHERE r.id = ?', await sha256(String(token || '')));
+  if (!r || r.used_at) throw new HttpError(410, 'reset_invalid', 'This reset link has already been used or replaced. Ask for a new one.');
+  if (r.expires_at < now()) throw new HttpError(410, 'reset_expired', 'This reset link has expired. Ask for a new one.');
+  return r;
+}
+export async function resetInfo(req, env, ctx, params) {
+  await rateLimit(env.DB, `resetinfo:${ip(req)}`, 30, 900);
+  const r = await findReset(env.DB, params.token);
+  return json({ name: r.name, email: r.email });
+}
+export async function resetPassword(req, env, ctx, params) {
+  const db = env.DB;
+  await rateLimit(db, `resetpw:${ip(req)}`, 20, 900);
+  const body = validate(v.object({ password: v.string({ min: 8, max: 200, trim: false }) }), await readJson(req));
+  const r = await findReset(db, params.token);
+  const pw = await hashPassword(body.password);
+  await run(db, 'UPDATE users SET pw_hash = ?, pw_salt = ?, pw_iter = ? WHERE id = ?', pw.hash, pw.salt, pw.iter, r.user_id);
+  await run(db, 'UPDATE password_resets SET used_at = ? WHERE id = ?', now(), r.id);
+  await run(db, 'DELETE FROM sessions WHERE user_id = ?', r.user_id); // sign out everywhere else
+  await audit(db, { userId: r.user_id, action: 'user.password_reset' });
+  const token = await createSession(db, r.user_id, req.headers.get('user-agent'));
+  return json({ ok: true, email: r.email }, 200, { 'set-cookie': sessionCookie(token, req) });
+}
