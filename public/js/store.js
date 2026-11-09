@@ -118,6 +118,8 @@ export async function loadCached() {
     state.tasks = new Map(snap.tasks.map((x) => [x.id, x]));
     state.groups = new Map((snap.groups || []).map((x) => [x.id, x]));
   }
+  // Older caches lack createdAt / logins (added for the List view): fetch everything again once.
+  if (snap && (!(state.household || {}).logins || [...state.events.values()].some((e) => e.createdAt === undefined && !e._pending))) state.seq = 0;
   for (const op of state.outbox) if (op.optimistic) applyOptimistic(op.optimistic);
   return !!snap;
 }

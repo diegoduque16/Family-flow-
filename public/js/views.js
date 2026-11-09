@@ -1,6 +1,6 @@
 // Main screens: Today, Calendar, Inbox, Assistant.
 import { h, icon, toast, fmtDay, fmtDayShort, fmtMonth, fmtTime, fmtRange, fmtWeekday, relDay, addDaysStr, sheet } from './ui.js';
-import { api, state, occurrences, todayStr, nowLocal, membersList, member, listsList, refreshCounts, emit, sync } from './store.js';
+import { api, state, occurrences, todayStr, nowLocal, membersList, member, listsList, refreshCounts, emit, sync, tz } from './store.js';
 import { openEventDetail, openEventEditor, openTaskEditor, toggleTask, taskDueLabel, errorText, describeRrule, openWhoAmI } from './editors.js';
 import { utcToLocal } from './time.js';
 import { eventIcon } from './icons.js';
@@ -138,18 +138,14 @@ export function CalendarView(rerender) {
   if (cal.mode === 'month') { title = fmtMonth(cal.cursor); body = monthView(today, f, rerender); }
   else if (cal.mode === 'week') { const ws = weekStart(cal.cursor); title = `${fmtDayShort(ws)} – ${fmtDayShort(addDaysStr(ws, 6))}`; body = weekView(ws, today, f); }
   else if (cal.mode === 'day') { title = `${relDay(cal.cursor, today) ? relDay(cal.cursor, today) + ', ' : ''}${fmtDayShort(cal.cursor)}`; body = dayView(cal.cursor, today, f); }
+  else if (cal.mode === 'list') return listPage(today, f, rerender, setMode);
   else { title = 'Agenda'; body = agendaView(cal.cursor < today ? cal.cursor : today, today, f); }
 
-  const filterChips = h('div', { class: 'filter', role: 'group', 'aria-label': 'Show events for' },
-    h('button', { type: 'button', class: 'chip', 'aria-pressed': String(!cal.filter.size), onclick: () => { cal.filter.clear(); pref.set('calFilter', []); rerender(); } }, 'Everyone'),
-    membersList().map((m) => h('button', { type: 'button', class: 'chip', '--c': m.color, 'aria-pressed': String(cal.filter.has(m.id)),
-      onclick: () => { if (cal.filter.has(m.id)) cal.filter.delete(m.id); else cal.filter.add(m.id); pref.set('calFilter', [...cal.filter]); rerender(); } },
-    h('span', { class: 'dot', '--c': m.color }), m.name)));
+  const filterChips = filterChipsFor(rerender);
 
   return h('div', { class: 'page' },
     statusBanner(),
-    h('div', { class: 'seg', role: 'group', 'aria-label': 'Calendar view' }, ['day', 'week', 'month', 'agenda'].map((m) =>
-      h('button', { type: 'button', 'aria-pressed': String(cal.mode === m), onclick: () => setMode(m) }, m[0].toUpperCase() + m.slice(1)))),
+    modeSeg(setMode),
     h('div', { class: 'cal-head' },
       h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Previous', onclick: () => step(-1) }, icon('left')),
       h('div', { class: 'title', 'aria-live': 'polite' }, title),
@@ -157,6 +153,17 @@ export function CalendarView(rerender) {
       h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Next', onclick: () => step(1) }, icon('right'))),
     filterChips,
     body);
+}
+function modeSeg(setMode) {
+  return h('div', { class: 'seg', role: 'group', 'aria-label': 'Calendar view' }, ['day', 'week', 'month', 'agenda', 'list'].map((m) =>
+    h('button', { type: 'button', 'aria-pressed': String(cal.mode === m), onclick: () => setMode(m) }, m[0].toUpperCase() + m.slice(1))));
+}
+function filterChipsFor(rerender) {
+  return h('div', { class: 'filter', role: 'group', 'aria-label': 'Show events for' },
+    h('button', { type: 'button', class: 'chip', 'aria-pressed': String(!cal.filter.size), onclick: () => { cal.filter.clear(); pref.set('calFilter', []); rerender(); } }, 'Everyone'),
+    membersList().map((m) => h('button', { type: 'button', class: 'chip', '--c': m.color, 'aria-pressed': String(cal.filter.has(m.id)),
+      onclick: () => { if (cal.filter.has(m.id)) cal.filter.delete(m.id); else cal.filter.add(m.id); pref.set('calFilter', [...cal.filter]); rerender(); } },
+    h('span', { class: 'dot', '--c': m.color }), m.name)));
 }
 function weekStart(date) { const d = new Date(`${date}T12:00:00Z`).getUTCDay(); return addDaysStr(date, -d); }
 
@@ -410,3 +417,136 @@ export function AssistantView(rerender, { startRecording } = {}) {
     chat.items.length ? h('div', { class: 'row', style: { justifyContent: 'flex-end' } }, h('button', { type: 'button', class: 'btn ghost sm', onclick: () => { chat.items = []; chat.conversationId = null; saveChat(); rerender(); } }, 'New conversation')) : null,
     list, composer);
 }
+
+// ---------- List: every entry in one place, filterable by when it happens and when it was added ----------
+const log = { q: '', when: pref.get('logWhen', 'upcoming'), added: pref.get('logAdded', 'any'), sort: pref.get('logSort', 'date'), from: '', to: '', addFrom: '', addTo: '' };
+const monthStart = (d) => `${d.slice(0, 7)}-01`;
+const nextMonth = (d) => { const x = new Date(`${monthStart(d)}T12:00:00Z`); x.setUTCMonth(x.getUTCMonth() + 1); return x.toISOString().slice(0, 10); };
+const shortDate = (d, withYear = false) => new Date(`${d.slice(0, 10)}T12:00:00Z`).toLocaleDateString(undefined, { timeZone: 'UTC', month: 'short', day: 'numeric', ...(withYear ? { year: 'numeric' } : {}) });
+
+function addedBy(ev) {
+  if (ev.sourceId) return (state.sources.get(ev.sourceId) || {}).name || 'an imported calendar';
+  const mid = ((state.household || {}).logins || {})[ev.ownerUserId];
+  const m = mid && member(mid);
+  return m ? m.name : '';
+}
+
+function listPage(today, f, rerender, setMode) {
+  const save = () => { pref.set('logWhen', log.when); pref.set('logAdded', log.added); pref.set('logSort', log.sort); };
+  // Window for "when it happens".
+  const far = 3 * 366;
+  let from, to;
+  switch (log.when) {
+    case 'upcoming': from = today; to = addDaysStr(today, far); break;
+    case 'past': from = addDaysStr(today, -far); to = addDaysStr(today, 1); break;
+    case 'week': from = today; to = addDaysStr(today, 7); break;
+    case 'month': from = monthStart(today); to = nextMonth(today); break;
+    case 'nextmonth': from = nextMonth(today); to = nextMonth(from); break;
+    case 'custom': from = log.from || today; to = addDaysStr(log.to && log.to >= from ? log.to : from, 1); break;
+    default: from = addDaysStr(today, -far); to = addDaysStr(today, far);
+  }
+  // One row per event: the first matching date (the latest one for "Past"; the next upcoming one for "Any date").
+  const pick = new Map();
+  for (const o of occurrences(from, to, f)) {
+    if (o.ev.holiday) continue;
+    const cur = pick.get(o.ev.id);
+    if (!cur) { pick.set(o.ev.id, o); continue; }
+    if (log.when === 'past' && o.start > cur.start) pick.set(o.ev.id, o);
+    else if (log.when === 'any' && cur.start.slice(0, 10) < today && o.start.slice(0, 10) >= today) pick.set(o.ev.id, o);
+  }
+  // "When it was added" filter (in the family's time zone).
+  const z = tz();
+  const addedDay = (ev) => utcToLocal(ev.createdAt || Date.now(), z, false);
+  let aFrom = null, aTo = null;
+  switch (log.added) {
+    case 'today': aFrom = today; aTo = today; break;
+    case 'yesterday': aFrom = addDaysStr(today, -1); aTo = aFrom; break;
+    case '7': aFrom = addDaysStr(today, -6); aTo = today; break;
+    case '30': aFrom = addDaysStr(today, -29); aTo = today; break;
+    case 'custom': aFrom = log.addFrom || null; aTo = log.addTo || null; break;
+    default: break;
+  }
+  const q = log.q.trim().toLowerCase();
+  let rows = [...pick.values()].filter((o) => {
+    const d = addedDay(o.ev);
+    if (aFrom && d < aFrom) return false;
+    if (aTo && d > aTo) return false;
+    if (q && ![o.ev.title, o.ev.notes, o.ev.location && o.ev.location.name, o.ev.location && o.ev.location.address, ...(o.ev.assignees || []).map((id) => (member(id) || {}).name)]
+      .some((x) => x && String(x).toLowerCase().includes(q))) return false;
+    return true;
+  });
+  if (log.sort === 'added') rows.sort((a, b) => (b.ev.createdAt || Date.now()) - (a.ev.createdAt || Date.now()));
+  else if (log.when === 'past') rows.sort((a, b) => b.startUtc - a.startUtc);
+  else rows.sort((a, b) => a.startUtc - b.startUtc || a.ev.title.localeCompare(b.ev.title));
+
+  const sel = (value, opts, onchange, label) => {
+    const s = h('select', { class: 'input', 'aria-label': label }, opts.map(([v, t]) => h('option', { value: v, selected: v === value }, t)));
+    s.addEventListener('change', () => { onchange(s.value); save(); rerender(); });
+    return s;
+  };
+  const dateIn = (value, onchange, label) => {
+    const i = h('input', { class: 'input', type: 'date', value, 'aria-label': label });
+    i.addEventListener('change', () => { onchange(i.value); rerender(); });
+    return i;
+  };
+  const search = h('input', { class: 'input', type: 'search', placeholder: 'Search title, place or person', value: log.q, 'aria-label': 'Search entries' });
+  search.addEventListener('input', debounceLocal(() => { log.q = search.value; rerender(); const s2 = document.querySelector('input[aria-label="Search entries"]'); if (s2) { s2.focus(); s2.setSelectionRange(s2.value.length, s2.value.length); } }, 250));
+
+  const filters = h('div', { class: 'card', style: { padding: '12px', marginBottom: '12px' } },
+    search,
+    h('div', { class: 'two', style: { marginTop: '10px' } },
+      h('label', { class: 'field', style: { margin: 0 } }, h('span', { class: 'label' }, 'Happening'),
+        sel(log.when, [['upcoming', 'Upcoming'], ['week', 'Next 7 days'], ['month', 'This month'], ['nextmonth', 'Next month'], ['past', 'Past'], ['any', 'Any date'], ['custom', 'Pick dates…']], (v) => { log.when = v; }, 'Happening')),
+      h('label', { class: 'field', style: { margin: 0 } }, h('span', { class: 'label' }, 'Added'),
+        sel(log.added, [['any', 'Any time'], ['today', 'Today'], ['yesterday', 'Yesterday'], ['7', 'Last 7 days'], ['30', 'Last 30 days'], ['custom', 'Pick dates…']], (v) => { log.added = v; }, 'Added'))),
+    log.when === 'custom' ? h('div', { class: 'two', style: { marginTop: '8px' } },
+      h('label', { class: 'field', style: { margin: 0 } }, h('span', { class: 'label' }, 'Happening from'), dateIn(log.from || today, (v) => { log.from = v; }, 'Happening from')),
+      h('label', { class: 'field', style: { margin: 0 } }, h('span', { class: 'label' }, 'to'), dateIn(log.to || log.from || today, (v) => { log.to = v; }, 'Happening to'))) : null,
+    log.added === 'custom' ? h('div', { class: 'two', style: { marginTop: '8px' } },
+      h('label', { class: 'field', style: { margin: 0 } }, h('span', { class: 'label' }, 'Added from'), dateIn(log.addFrom, (v) => { log.addFrom = v; }, 'Added from')),
+      h('label', { class: 'field', style: { margin: 0 } }, h('span', { class: 'label' }, 'to'), dateIn(log.addTo, (v) => { log.addTo = v; }, 'Added to'))) : null,
+    h('div', { class: 'row', style: { justifyContent: 'space-between', marginTop: '10px', gap: '8px' } },
+      h('span', { class: 'muted small' }, `${rows.length} entr${rows.length === 1 ? 'y' : 'ies'}`),
+      h('div', { class: 'seg', role: 'group', 'aria-label': 'Sort', style: { margin: 0, whiteSpace: 'nowrap' } },
+        [['date', 'By date'], ['added', 'Latest added']].map(([v, t]) => h('button', { type: 'button', 'aria-pressed': String(log.sort === v), onclick: () => { log.sort = v; save(); rerender(); } }, t)))));
+
+  // Group under month headings (by date) or day-added headings (newest added).
+  const groups = new Map();
+  for (const o of rows) {
+    const key = log.sort === 'added' ? addedDay(o.ev) : o.start.slice(0, 7);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(o);
+  }
+  const heading = (key) => {
+    if (log.sort !== 'added') return fmtMonth(`${key}-01`);
+    const rel = key === today ? 'Today' : key === addDaysStr(today, -1) ? 'Yesterday' : '';
+    return `Added ${rel || fmtDay(key)}`;
+  };
+  const body = rows.length
+    ? [...groups.entries()].map(([key, list]) => h('div', { class: 'daygroup' }, h('h3', null, heading(key)), list.map((o) => logRow(o, today, z))))
+    : h('div', { class: 'empty' }, h('div', { class: 'big' }, 'No entries match'), h('p', { class: 'muted' }, 'Try “Any date” or “Any time”, or clear the search.'));
+
+  return h('div', { class: 'page' }, statusBanner(), modeSeg(setMode), filterChipsFor(rerender), filters, body);
+}
+
+function logRow(o, today, z) {
+  const ev = o.ev;
+  const d = o.start.slice(0, 10);
+  const thisYear = d.slice(0, 4) === today.slice(0, 4);
+  const addedAt = ev.createdAt ? utcToLocal(ev.createdAt, z, true) : null;
+  const by = addedBy(ev);
+  return h('button', { type: 'button', class: `ev${o.endUtc < Date.now() ? ' past' : ''}${ev._pending ? ' pending' : ''}`, onclick: () => openEventDetail(ev, o) },
+    h('span', { class: 'bar', ...barColors(ev.assignees) }),
+    h('span', { class: 'when', style: { width: '70px' } }, h('div', null, shortDate(d, !thisYear)), h('div', { class: 'end' }, ev.allDay ? 'All day' : fmtTime(o.start))),
+    h('span', { class: 'what' },
+      h('div', { class: 'title' }, withIcon(ev)),
+      h('div', { class: 'meta' },
+        whoDots(ev.assignees),
+        ev.location ? h('span', null, ev.location.name || ev.location.address.split(',')[0]) : null,
+        ev.rrule ? h('span', { title: describeRrule(ev.rrule) }, `↻ ${describeRrule(ev.rrule)}`) : null,
+        ev.visibility === 'private' ? h('span', { 'aria-label': 'Private' }, '🔒') : null),
+      h('div', { class: 'faint small', style: { marginTop: '2px' } },
+        ev._pending ? 'Adding…' : addedAt ? `Added ${addedAt.slice(0, 10) === today ? 'today' : shortDate(addedAt)}, ${fmtTime(addedAt)}${by ? ` · ${ev.sourceId ? 'from' : 'by'} ${by}` : ''}` : '')));
+}
+
+function debounceLocal(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }

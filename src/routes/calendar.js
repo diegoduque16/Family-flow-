@@ -21,7 +21,7 @@ export function eventOut(r) {
     startUtc: r.start_utc, endUtc: r.end_utc,
     rrule: r.rrule, seriesEndUtc: r.series_end_utc, exdates: parseJsonCol(r.exdates, []),
     assignees: parseJsonCol(r.assignees, []), visibility: r.visibility, groupId: r.group_id || null, icon: r.icon || null, reminders: parseJsonCol(r.reminders, []),
-    ownerUserId: r.owner_user_id, sourceId: r.source_id || null, readOnly: !!r.source_id, version: r.version, seq: r.seq, updatedAt: r.updated_at, deleted: !!r.deleted_at,
+    ownerUserId: r.owner_user_id, sourceId: r.source_id || null, readOnly: !!r.source_id, version: r.version, seq: r.seq, createdAt: r.created_at, updatedAt: r.updated_at, deleted: !!r.deleted_at,
   };
 }
 export function listOut(r) {
@@ -556,20 +556,22 @@ export async function sync(req, env, ctx) {
   const db = env.DB;
   const hh = ctx.household.id;
   const seq = (await one(db, 'SELECT seq FROM households WHERE id = ?', hh)).seq;
-  const [members, events, lists, tasks, groups, allLists] = await Promise.all([
+  const [members, events, lists, tasks, groups, allLists, logins] = await Promise.all([
     all(db, 'SELECT * FROM members WHERE household_id = ? AND seq > ?', hh, since),
     all(db, 'SELECT * FROM events WHERE household_id = ? AND seq > ?', hh, since),
     all(db, 'SELECT * FROM lists WHERE household_id = ? AND seq > ?', hh, since),
     all(db, 'SELECT * FROM tasks WHERE household_id = ? AND seq > ?', hh, since),
     all(db, 'SELECT * FROM family_groups WHERE household_id = ? AND seq > ?', hh, since),
     all(db, 'SELECT id, group_id FROM lists WHERE household_id = ?', hh),
+    all(db, 'SELECT user_id, member_id FROM memberships WHERE household_id = ?', hh),
   ]);
   const hiddenLists = new Set(allLists.filter((l) => !listVisible(l, ctx)).map((l) => l.id));
   const gone = (r) => ({ id: r.id, deleted: true, seq: r.seq });
   return json({
     seq,
     full: since === 0,
-    household: { id: hh, name: ctx.household.name, timezone: ctx.household.timezone, holidays: effectiveHolidays(ctx.household.holidays, ctx.household.timezone), holidaysSetting: ctx.household.holidays || 'auto' },
+    household: { id: hh, name: ctx.household.name, timezone: ctx.household.timezone, holidays: effectiveHolidays(ctx.household.holidays, ctx.household.timezone), holidaysSetting: ctx.household.holidays || 'auto',
+      logins: Object.fromEntries(logins.filter((l) => l.member_id).map((l) => [l.user_id, l.member_id])) },
     members: members.map(memberOut),
     events: events.map((r) => (visible(r, ctx) ? eventOut(r) : { id: r.id, deleted: true, seq: r.seq })),
     lists: lists.map((r) => (hiddenLists.has(r.id) ? gone(r) : listOut(r))),
