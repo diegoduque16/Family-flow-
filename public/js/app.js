@@ -1,7 +1,7 @@
 // App shell: boot, sign-in/sign-up/join, tab navigation, the universal Add button and voice capture.
 import { h, icon, toast, sheet, closeAllSheets, labelInput } from './ui.js';
 import { api, state, on, sync, loadCached, startAutoSync, refreshCounts, clearLocalData, resetState, scroller } from './store.js';
-import { TodayView, CalendarView, InboxView, AssistantView, assistantDraft } from './views.js';
+import { TodayView, CalendarView, InboxView, AssistantView, assistantDraft, exampleKid } from './views.js';
 import { MoreView, TasksView, FamilyView, GroupsView, PeopleView, PlacesView, SyncView, NotificationsView, HouseholdView, DataView, DiagnosticsView, AccountView } from './more.js';
 import { openEventEditor, openTaskEditor, openEventDetail, errorText, openImportDocument } from './editors.js';
 import { recordVoice } from './voice.js';
@@ -206,7 +206,7 @@ function addMenu() {
 // ---------- voice capture ----------
 // Records up to 60s, transcribes on the server, then puts the text in the assistant box so it can be checked before sending.
 async function startRecording() {
-  const text = await recordVoice({ hint: 'Say something like “Swim lessons for Kiddo 1 every Saturday at 10”. Tap to stop.' });
+  const text = await recordVoice({ hint: `Say something like “Swim lessons for ${exampleKid()} every Saturday at 10”. Tap to stop.` });
   if (!text) return;
   assistantDraft.text = text;
   if (location.hash === '#/assistant') render(); else location.hash = '#/assistant';

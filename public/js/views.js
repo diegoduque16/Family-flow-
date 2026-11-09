@@ -407,7 +407,7 @@ export function AssistantView(rerender, { startRecording } = {}) {
     }
   };
   renderList();
-  const ta = h('textarea', { class: 'input', rows: 1, placeholder: f.assistant ? 'e.g. Dentist for Kiddo 2 next Tuesday at 3:30' : 'Assistant not set up yet', 'aria-label': 'Message', enterkeyhint: 'send', disabled: !f.assistant });
+  const ta = h('textarea', { class: 'input', rows: 1, placeholder: f.assistant ? `e.g. Dentist for ${exampleKid()} next Tuesday at 3:30` : 'Assistant not set up yet', 'aria-label': 'Message', enterkeyhint: 'send', disabled: !f.assistant });
   ta.value = assistantDraft.text;
   const grow = () => { ta.style.height = 'auto'; ta.style.height = `${Math.min(140, ta.scrollHeight)}px`; };
   ta.addEventListener('input', () => { assistantDraft.text = ta.value; grow(); });
@@ -439,7 +439,7 @@ export function AssistantView(rerender, { startRecording } = {}) {
     }
   }
   const scrollEnd = () => setTimeout(() => { const sc = scroller(); sc.scrollTo({ top: sc.scrollHeight, behavior: 'smooth' }); }, 30);
-  const suggestions = ['What’s on this weekend?', 'Remind me to pay the sitter Friday', 'Swim lessons every Saturday 10am for Kiddo 1', 'Add milk and eggs to groceries'];
+  const suggestions = ['What’s on this weekend?', 'Remind me to pay the sitter Friday', `Swim lessons every Saturday 10am for ${exampleKid()}`, 'Add milk and eggs to groceries'];
   const composer = h('div', { class: 'composer' },
     !chat.items.length && f.assistant ? h('div', { class: 'suggest' }, suggestions.map((s) => h('button', { type: 'button', class: 'chip', onclick: () => send(s) }, s))) : null,
     h('form', { onsubmit: (e) => { e.preventDefault(); send(); } }, micBtn, ta, sendBtn));
@@ -582,3 +582,6 @@ function logRow(o, today, z) {
 }
 
 function debounceLocal(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+
+// A real family member's name for examples (a child if there is one).
+export function exampleKid() { const ms = membersList(); const m = ms.find((x) => x.kind === 'child') || ms.find((x) => x.id !== state.me.memberId) || ms[0]; return m ? m.name : 'Emma'; }
