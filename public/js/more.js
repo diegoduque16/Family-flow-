@@ -118,7 +118,11 @@ export function FamilyView(rerender) {
     h('div', { class: 'card' }, h('ul', { class: 'list' }, membersList().map((m) => h('li', null,
       h('button', { type: 'button', class: 'item', onclick: () => memberEditor(m, rerender), disabled: !canEdit() },
         avatarEl(m, { size: 40 }),
-        h('span', { class: 'grow' }, h('div', { class: 'title' }, m.name, loginOf(m) && loginOf(m).id === state.me.user.id ? h('span', { class: 'faint' }, ' · you') : null), h('div', { class: 'meta' }, [m.label && m.fullName !== m.label ? m.fullName : null, m.kind === 'child' ? 'Child' : 'Adult', ...groupsList().filter((g) => g.memberIds.includes(m.id)).map((g) => g.name)].filter(Boolean).join(' · '))),
+        h('span', { class: 'grow', style: { minWidth: 0 } },
+          h('div', { class: 'title' }, m.name, loginOf(m) && loginOf(m).id === state.me.user.id ? h('span', { class: 'faint' }, ' · you') : null),
+          h('div', { class: 'meta' }, [m.label && m.fullName !== m.label ? m.fullName : null, m.kind === 'child' ? 'Child' : 'Adult', ...groupsList().filter((g) => g.memberIds.includes(m.id)).map((g) => g.name)].filter(Boolean).join(' · ')),
+          peopleCache ? h('div', { class: 'small', style: { marginTop: '2px', overflowWrap: 'anywhere', color: loginOf(m) ? 'var(--ink-2)' : 'var(--ink-3)' } },
+            loginOf(m) ? `🔑 Signs in as ${loginOf(m).email || loginOf(m).name}` : 'No login – doesn’t sign in') : null),
         canEdit() ? icon('chev', 'chev') : null))))),
     canEdit() ? h('button', { type: 'button', class: 'btn block primary', onclick: () => memberEditor(null, rerender) }, icon('plus'), 'Add a profile') : null,
     h('button', { type: 'button', class: 'btn block', onclick: () => openWhoAmI(() => { peopleCache = null; rerender(); }) }, 'Which profile is me?'));
@@ -281,13 +285,24 @@ export function PeopleView(rerender) {
       const roleName = { owner: 'Owner', adult: 'Adult', child: 'Child' };
       root.replaceChildren(back('People & invites'),
         h('p', { class: 'muted' }, 'Owners manage the household. Adults can add and edit everything. Children can see shared events and tick off tasks.'),
-        h('div', { class: 'card' }, h('ul', { class: 'list' }, people.map((p) => h('li', null, h('div', { class: 'item' },
-          member(p.member_id) ? avatarEl(member(p.member_id)) : h('span', { class: 'avatar', '--c': 'var(--ink-3)' }, initials(p.name)),
-          h('span', { class: 'grow' }, h('div', { class: 'title' }, p.name, p.id === state.me.user.id ? ' (you)' : '', member(p.member_id) ? h('span', { class: 'faint' }, ` = ${member(p.member_id).name}`) : null), h('div', { class: 'meta' }, [roleName[p.role], p.email, member(p.member_id) ? null : 'no profile linked'].filter(Boolean).join(' · '))),
-          p.id === state.me.user.id ? h('button', { type: 'button', class: 'btn ghost sm', onclick: () => openWhoAmI(rerender) }, 'This is me…') : null,
-          p.id !== state.me.user.id ? h('button', { type: 'button', class: 'btn ghost sm', onclick: () => sendAppLink(p) }, icon('share'), 'Send link') : null,
-          isOwner() ? h('button', { type: 'button', class: 'btn ghost sm', onclick: () => personEditor(p, rerender) }, 'Edit') :
-            p.id === state.me.user.id ? h('button', { type: 'button', class: 'btn ghost sm', onclick: () => leave(p) }, 'Leave') : null))))),
+        h('div', { class: 'card' }, h('ul', { class: 'list' }, people.map((p) => {
+          const prof = member(p.member_id);
+          const me = p.id === state.me.user.id;
+          return h('li', { style: { padding: '12px 0' } },
+            h('div', { class: 'row', style: { gap: '12px', alignItems: 'flex-start' } },
+              prof ? avatarEl(prof, { size: 40 }) : h('span', { class: 'avatar', '--c': 'var(--ink-3)' }, initials(p.name)),
+              h('div', { class: 'grow', style: { minWidth: 0 } },
+                h('div', { class: 'title', style: { fontWeight: 650 } }, p.name, me ? h('span', { class: 'faint' }, ' (you)') : null),
+                p.email ? h('div', { class: 'small', style: { overflowWrap: 'anywhere' } }, `🔑 ${p.email}`) : null,
+                h('div', { class: 'small', style: { marginTop: '2px' } },
+                  prof ? ['Shows up as ', h('b', null, prof.name), prof.label && prof.fullName && prof.fullName !== prof.label ? ` (${prof.fullName})` : ''] : h('span', { style: { color: 'var(--warn)' } }, 'No profile linked yet'),
+                  h('span', { class: 'faint' }, ` · ${roleName[p.role]}`)))),
+            h('div', { class: 'row', style: { gap: '6px', flexWrap: 'wrap', marginTop: '8px', paddingLeft: '52px' } },
+              me ? h('button', { type: 'button', class: 'btn sm', onclick: () => openWhoAmI(rerender) }, prof ? 'Change my profile' : 'Pick my profile') : null,
+              !me ? h('button', { type: 'button', class: 'btn sm', onclick: () => sendAppLink(p) }, icon('share'), 'Send link') : null,
+              isOwner() ? h('button', { type: 'button', class: 'btn sm', onclick: () => personEditor(p, rerender) }, 'Edit') :
+                me ? h('button', { type: 'button', class: 'btn ghost sm', onclick: () => leave(p) }, 'Leave') : null));
+        }))),
         h('div', { class: 'card' }, h('h2', null, 'Lost the link?'),
           h('p', { class: 'muted small', style: { marginTop: 0 } }, 'People who already joined just need the app’s address and their own email and password. Tap “Send link” next to them, or share it here.'),
           h('button', { type: 'button', class: 'btn block', onclick: () => sendAppLink(null) }, icon('share'), 'Share the Family Flow link')),
@@ -364,12 +379,12 @@ function personEditor(p, rerender) {
   const role = h('select', { class: 'input' }, h('option', { value: 'owner' }, 'Owner'), h('option', { value: 'adult' }, 'Adult'), h('option', { value: 'child' }, 'Child'));
   role.value = p.role;
   const prof = h('select', { class: 'input' }, h('option', { value: '' }, 'None'), membersList().map((m) => h('option', { value: m.id }, m.name)));
-  api('GET', '/api/household/people').then(({ people }) => { for (const o of prof.options) { const other = people.find((x) => x.member_id && x.member_id === o.value && x.id !== p.id); if (other) o.textContent = `${member(o.value).name} (now ${other.name}’s — will move)`; } }).catch(() => {});
+  api('GET', '/api/household/people').then(({ people }) => { for (const o of prof.options) { const other = people.find((x) => x.member_id && x.member_id === o.value && x.id !== p.id); if (other) o.textContent = `${member(o.value).name} (now ${other.email || other.name}’s — will move)`; } }).catch(() => {});
   prof.value = p.member_id || '';
   const err = h('div');
   const s = sheet({
     title: p.name,
-    body: h('div', null, h('label', { class: 'field' }, h('span', { class: 'label' }, 'Role'), role), h('label', { class: 'field' }, h('span', { class: 'label' }, 'Their family profile'), prof, h('p', { class: 'hint' }, 'Which profile is this person — e.g. Hayley is Mom. Each profile belongs to one login.')), err),
+    body: h('div', null, p.email ? h('p', { class: 'muted', style: { marginTop: 0, overflowWrap: 'anywhere' } }, `🔑 Signs in as ${p.email}`) : null, h('label', { class: 'field' }, h('span', { class: 'label' }, 'Role'), role), h('label', { class: 'field' }, h('span', { class: 'label' }, 'Their family profile'), prof, h('p', { class: 'hint' }, 'Which profile is this person — e.g. Hayley is Mom. Each profile belongs to one login.')), err),
     foot: [
       h('button', { type: 'button', class: 'btn danger', onclick: async () => {
         if (!(await confirmDialog(p.id === state.me.user.id ? 'Leave household?' : `Remove ${p.name}?`, 'They will no longer be able to sign in to this household. Their events stay.', 'Remove', true))) return;

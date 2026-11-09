@@ -331,7 +331,7 @@ export async function listPeople(req, env, ctx) {
   requireRole(ctx, ['owner', 'adult', 'child']);
   const people = await all(env.DB,
     'SELECT u.id, u.name, u.email, m.role, m.member_id FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.household_id = ? ORDER BY m.created_at', ctx.household.id);
-  return json({ people: people.map((p) => ({ ...p, email: ctx.role === 'owner' || p.id === ctx.user.id ? p.email : undefined })) });
+  return json({ people: people.map((p) => ({ ...p, email: ctx.role !== 'child' || p.id === ctx.user.id ? p.email : undefined })) });
 }
 
 async function checkProfile(db, ctx, memberId) {
