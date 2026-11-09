@@ -76,15 +76,24 @@ function timeAgo(ms) {
 }
 
 // ---------- Today ----------
-export function TodayView() {
+export function TodayView(rerender) {
   const today = todayStr();
+  if (cal.group && !state.groups.get(cal.group)) cal.group = null;
+  // Today follows the same family group choice as the Calendar (but not the person filter).
+  const gf = cal.group ? Object.assign(new Set(), { group: cal.group }) : null;
+  const grp = cal.group && state.groups.get(cal.group);
+  const taskInGroup = (t) => {
+    if (!grp) return true;
+    const l = state.lists.get(t.listId) || {};
+    return l.groupId === grp.id || (t.assignee && grp.memberIds.includes(t.assignee)) || (!l.groupId && !t.assignee);
+  };
   const nowL = nowLocal();
   const nowMs = Date.now();
-  const occToday = occurrences(today, addDaysStr(today, 1));
-  const occTomorrow = occurrences(addDaysStr(today, 1), addDaysStr(today, 2));
-  const next = occurrences(today, addDaysStr(today, 14)).find((o) => !o.ev.allDay && o.endUtc > nowMs);
-  const tasks = [...state.tasks.values()].filter((t) => !t.done && t.due && t.due.slice(0, 10) <= today).sort((a, b) => a.due.localeCompare(b.due));
-  const undated = [...state.tasks.values()].filter((t) => !t.done && !t.due && (state.lists.get(t.listId) || {}).kind === 'todo').slice(0, 5);
+  const occToday = occurrences(today, addDaysStr(today, 1), gf);
+  const occTomorrow = occurrences(addDaysStr(today, 1), addDaysStr(today, 2), gf);
+  const next = occurrences(today, addDaysStr(today, 14), gf).find((o) => !o.ev.allDay && o.endUtc > nowMs);
+  const tasks = [...state.tasks.values()].filter((t) => !t.done && t.due && t.due.slice(0, 10) <= today && taskInGroup(t)).sort((a, b) => a.due.localeCompare(b.due));
+  const undated = [...state.tasks.values()].filter((t) => !t.done && !t.due && (state.lists.get(t.listId) || {}).kind === 'todo' && taskInGroup(t)).slice(0, 5);
   const hour = Number(nowL.slice(11, 13));
   const greet = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
   const nm = state.me.user.name.split(' ')[0];
@@ -93,6 +102,7 @@ export function TodayView() {
     statusBanner(),
     h('p', { class: 'muted', style: { margin: '6px 0 0', fontWeight: 600 } }, fmtDay(today)),
     h('h2', { class: 'hello' }, `${greet}, ${nm}`),
+    rerender ? groupPicker(rerender) : null,
     installBanner(),
     !state.me.memberId && membersList().length ? h('button', { type: 'button', class: 'banner info', style: { width: '100%', textAlign: 'left', border: 0, cursor: 'pointer' }, onclick: () => openWhoAmI() }, icon('people'), h('span', null, h('b', null, 'Which family profile is you?'), h('br'), 'Tap to choose (for example Mom or Dad) so events for you and family alerts reach you.')) : null,
     state.proposalsCount ? h('a', { class: 'banner info', href: '#/inbox', style: { textDecoration: 'none' } }, icon('assistant'), `${state.proposalsCount} suggestion${state.proposalsCount > 1 ? 's' : ''} from the assistant waiting for you to confirm`) : null,
