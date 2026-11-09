@@ -1,5 +1,5 @@
 // Service worker: offline app shell, web push display, notification clicks.
-const VERSION = 'ff-v25';
+const VERSION = 'ff-v26';
 const SHELL = ['/', '/index.html', '/css/app.css', '/js/app.js', '/js/ui.js', '/js/store.js', '/js/time.js', '/js/editors.js', '/js/views.js', '/js/more.js', '/js/icons.js', '/js/install.js', '/js/setup.js', '/js/holidays.js', '/js/voice.js',
   '/manifest.webmanifest', '/icons/icon.svg', '/icons/icon-192.png', '/icons/icon-512.png'];
 

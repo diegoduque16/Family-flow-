@@ -397,6 +397,7 @@ export function AssistantView(rerender, { startRecording } = {}) {
     if (!chat.items.length) {
       list.append(h('div', { class: 'card' }, h('h2', null, 'Ask or tell me anything about your family’s plans'),
         h('p', { class: 'muted', style: { margin: 0 } }, 'I’ll prepare events and tasks for you to check. Nothing is saved until you tap Confirm.'),
+        f.assistant ? h('p', { class: 'small', style: { margin: '10px 0 0', color: 'var(--ink-2)' } }, 'For example: ', h('i', null, `“Dentist for ${exampleKid()} next Tuesday at 3:30”`)) : null,
         !f.assistant ? h('div', { class: 'banner warn', style: { marginTop: '10px' } }, 'The assistant isn’t switched on for this app yet (the Anthropic API key hasn’t been added). You can still add everything with the + button.') : null));
     }
     for (const it of chat.items) {
@@ -407,13 +408,13 @@ export function AssistantView(rerender, { startRecording } = {}) {
     }
   };
   renderList();
-  const ta = h('textarea', { class: 'input', rows: 1, placeholder: f.assistant ? `e.g. Dentist for ${exampleKid()} next Tuesday at 3:30` : 'Assistant not set up yet', 'aria-label': 'Message', enterkeyhint: 'send', disabled: !f.assistant });
+  const ta = h('textarea', { class: 'input', rows: 1, placeholder: f.assistant ? 'Ask or add anything…' : 'Assistant not set up yet', 'aria-label': 'Message', enterkeyhint: 'send', disabled: !f.assistant });
   ta.value = assistantDraft.text;
   const grow = () => { ta.style.height = 'auto'; ta.style.height = `${Math.min(140, ta.scrollHeight)}px`; };
   ta.addEventListener('input', () => { assistantDraft.text = ta.value; grow(); });
   ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
-  const sendBtn = h('button', { type: 'submit', class: 'btn primary', 'aria-label': 'Send', disabled: !f.assistant }, icon('send'));
-  const micBtn = h('button', { type: 'button', class: 'btn', 'aria-label': 'Speak', disabled: !f.voice, onclick: () => startRecording && startRecording() }, icon('mic'));
+  const sendBtn = h('button', { type: 'submit', class: 'btn primary round', 'aria-label': 'Send', disabled: !f.assistant }, icon('send'));
+  const micBtn = h('button', { type: 'button', class: 'btn round', 'aria-label': 'Speak', disabled: !f.voice, onclick: () => startRecording && startRecording() }, icon('mic'));
   let busy = false;
   async function send(textArg) {
     const text = (textArg ?? ta.value).trim();
